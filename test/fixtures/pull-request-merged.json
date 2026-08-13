@@ -1,0 +1,12 @@
+{
+  "action": "closed",
+  "number": 42,
+  "pull_request": {
+    "number": 42,
+    "title": "Add arcade scene renderer",
+    "merged": true,
+    "html_url": "https://github.com/nextworkengineering/projects-app/pull/42",
+    "user": { "login": "octocat" }
+  },
+  "repository": { "full_name": "nextworkengineering/projects-app" }
+}

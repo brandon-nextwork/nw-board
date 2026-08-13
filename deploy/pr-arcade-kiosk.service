@@ -1,0 +1,18 @@
+[Unit]
+Description=PR Arcade kiosk (Chromium fullscreen on the TV)
+# Deliberately no After=/PartOf=graphical-session.target: Pi OS's wayfire
+# session doesn't reliably reach that target, so ordering against it would be
+# inert decoration. kiosk.sh waits for a compositor socket itself, and
+# Restart=always covers a session that comes up late.
+
+[Service]
+Type=simple
+# ExecStart is written by install.sh to
+# ~/.config/systemd/user/pr-arcade-kiosk.service.d/10-local.conf, pointing at
+# this repo checkout. DISPLAY/WAYLAND_DISPLAY are detected in kiosk.sh rather
+# than guessed here.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

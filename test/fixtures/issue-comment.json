@@ -1,0 +1,9 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 13,
+    "title": "Load the sprite sheet",
+    "pull_request": { "url": "https://api.github.com/repos/nextworkengineering/content/pulls/13" }
+  },
+  "repository": { "full_name": "nextworkengineering/content" }
+}

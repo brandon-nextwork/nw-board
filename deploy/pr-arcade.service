@@ -1,0 +1,20 @@
+[Unit]
+Description=PR Arcade server (webhook receiver + display server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/pr-arcade.env
+Restart=always
+RestartSec=5
+
+# User, WorkingDirectory and ExecStart are deliberately NOT set here: they
+# depend on where the repo was cloned, who runs it, and where npm ended up.
+# install.sh writes them to
+# /etc/systemd/system/pr-arcade.service.d/10-local.conf, which is the single
+# source of truth. Without that drop-in this unit refuses to start — by design,
+# so a missing install fails loudly rather than running the wrong thing.
+
+[Install]
+WantedBy=multi-user.target
