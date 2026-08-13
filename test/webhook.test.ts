@@ -21,7 +21,11 @@ const sign = (body: string, secret = SECRET) =>
 const configPath = fileURLToPath(
   new URL("./fixtures/config.json", import.meta.url),
 );
-const start = (now?: () => number) => startServer(0, { configPath, now });
+// Celebration Events are flagged by Quiet Hours, so the default clock is pinned inside
+// the sound window (Thursday 2026-08-13, 10:00 local) rather than left to wall time.
+const IN_THE_SOUND_WINDOW = new Date(2026, 7, 13, 10, 0).getTime();
+const start = (now: () => number = () => IN_THE_SOUND_WINDOW) =>
+  startServer(0, { configPath, now });
 
 let running: { port: number; close: () => Promise<void> } | undefined;
 afterEach(async () => {
@@ -91,6 +95,7 @@ test("a signed merged-PR webhook from a Tracked Repo pushes a pr-merged Celebrat
       repo: "example-org/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      audible: true,
     },
   ]);
 });
@@ -130,6 +135,7 @@ test("a merged-PR webhook with a very long PR description still pushes the Celeb
       repo: "example-org/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      audible: true,
     },
   ]);
 });
@@ -180,6 +186,7 @@ test.for([
       repo: "example-org/features",
       number: 7,
       title: "Wire up the Feed",
+      audible: true,
     },
   ],
   [

@@ -45,7 +45,48 @@ function renderFeed() {
 // An idle board still has to age entries out; a minute of granularity is plenty.
 setInterval(renderFeed, 60_000);
 
-// Protocol: {type:"snapshot", feed:[...]} on connect, then bare domain events.
+// Placeholder sounds: square-wave oscillators standing in for the 8-bit assets.
+// [frequency Hz, start seconds, length seconds] per note; a jingle stays under 3s.
+const JINGLE = [
+  [523, 0, 0.12],
+  [659, 0.12, 0.12],
+  [784, 0.24, 0.12],
+  [1047, 0.36, 0.34],
+];
+const CHIME = [
+  [880, 0, 0.35],
+  [587, 0.3, 0.6],
+];
+
+// The kiosk has no user gesture to unblock audio, so Chromium is launched with
+// --autoplay-policy=no-user-gesture-required. Anywhere else the context stays
+// suspended (or missing) and playback is skipped rather than throwing.
+let audio;
+function play(notes) {
+  try {
+    audio ??= new AudioContext();
+  } catch {
+    return;
+  }
+  if (audio.state !== "running") return;
+  for (const [frequency, start, length] of notes) {
+    const at = audio.currentTime + start;
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+    oscillator.type = "square";
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.12, at);
+    // Fade each note out; a hard stop on a square wave clicks.
+    gain.gain.exponentialRampToValueAtTime(0.001, at + length);
+    oscillator.connect(gain).connect(audio.destination);
+    oscillator.start(at);
+    oscillator.stop(at + length);
+  }
+}
+
+// Protocol: {type:"snapshot", feed:[...]} on connect, then bare domain events;
+// Celebration Events carry audible:true|false (Quiet Hours), and {type:"day-chime"}
+// marks the start and end of the workday.
 let backoff = 500;
 function connect() {
   const socket = new WebSocket(`ws://${location.host}`);
@@ -56,12 +97,17 @@ function connect() {
 
   socket.addEventListener("message", (message) => {
     const data = JSON.parse(message.data);
+    if (data.type === "day-chime") {
+      play(CHIME);
+      return;
+    }
     if (data.type === "snapshot") {
       feed = data.feed.map(stamp);
     } else {
       feed.push(stamp(data));
       if (CELEBRATIONS.has(data.type)) {
         celebrate(`${data.type.toUpperCase()}  #${data.number}  ${data.title}`);
+        if (data.audible) play(JINGLE);
       }
     }
     renderFeed();
