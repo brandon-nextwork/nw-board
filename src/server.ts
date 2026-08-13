@@ -78,12 +78,18 @@ export async function startServer(port: number, options: Options = {}) {
 
   const configPath =
     options.configPath ?? fileURLToPath(new URL("../config.json", import.meta.url));
-  const trackedRepos: string[] = JSON.parse(
-    readFileSync(configPath, "utf8"),
-  ).trackedRepos;
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const trackedRepos: string[] = config.trackedRepos;
   // A missing list would 400 every delivery; a bare string would match repos by substring.
   if (!Array.isArray(trackedRepos))
     throw new Error(`${configPath}: trackedRepos must be a list of "owner/name"`);
+
+  // Point values for the Celebration Events. Refuse to boot rather than score
+  // every merge as zero because someone fat-fingered the config.
+  const points: Record<string, number> = config.points ?? {};
+  for (const type of ["pr-merged", "review-approved"])
+    if (typeof points[type] !== "number")
+      throw new Error(`${configPath}: points.${type} must be a number`);
 
   const now = options.now ?? Date.now;
 
@@ -95,34 +101,55 @@ export async function startServer(port: number, options: Options = {}) {
     return feed.map((entry) => entry.event);
   };
 
-  const app = express();
-  app.use(express.static(fileURLToPath(new URL("../public", import.meta.url))));
-  const http = createServer(app);
-  const wss = new WebSocketServer({ server: http });
+  // The Team Score: this week's Celebration Event points. Derived on read, so the
+  // weekly reset needs no timer — crossing Monday 00:00 simply zeroes it.
+  let score = 0;
+  let scoreWeek = startOfWeek(now());
+  const teamScore = () => {
+    const week = startOfWeek(now());
+    if (week !== scoreWeek) {
+      scoreWeek = week;
+      score = 0;
+    }
+    return score;
+  };
 
-  // Display protocol (server -> client only):
-  //   on connect: {"type":"snapshot","feed":[<domain event>, ...]}  (oldest first)
-  //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title}
-  // No domain event type is called "snapshot", so `type` alone tells them apart.
-  wss.on("connection", (socket) =>
-    socket.send(JSON.stringify({ type: "snapshot", feed: currentFeed() })),
-  );
-
-  // The single path into state: webhooks and Backfill both land here, so anything
-  // derived from events (Team Score) has one function to hook. Repeats of an event
-  // already in the Feed (same type/repo/number) are dropped, which is what stops a
-  // webhook from duplicating what Backfill already fetched.
-  const recordEvent = (event: DomainEvent, at: number) => {
+  /**
+   * The one path into state: append to the Feed and credit the Team Score.
+   * Webhooks and Backfill both land here (Backfill with the event's real `at`),
+   * so the weekly score rebuilds from Backfill for free. Repeats of an event
+   * already in the Feed (same type/repo/number) are dropped — that's what stops
+   * a webhook duplicating what Backfill already fetched. Returns the points
+   * credited (0 for Ambient Events and older weeks), or null for a dropped repeat.
+   */
+  const recordEvent = (event: DomainEvent, at: number = now()): number | null => {
     const known = feed.some(
       ({ event: seen }) =>
         seen.type === event.type &&
         seen.repo === event.repo &&
         seen.number === event.number,
     );
-    if (known) return;
+    if (known) return null;
     feed.push({ at, event });
-    for (const client of wss.clients) client.send(JSON.stringify(event));
+    teamScore(); // roll the week over before crediting
+    const earned = startOfWeek(at) === scoreWeek ? (points[event.type] ?? 0) : 0;
+    score += earned;
+    return earned;
   };
+
+  const app = express();
+  app.use(express.static(fileURLToPath(new URL("../public", import.meta.url))));
+  const http = createServer(app);
+  const wss = new WebSocketServer({ server: http });
+
+  // Display protocol (server -> client only):
+  //   on connect: {"type":"snapshot","feed":[<domain event>, ...],"teamScore":<number>}
+  //               (feed oldest first)
+  //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title}
+  // No domain event type is called "snapshot", so `type` alone tells them apart.
+  const snapshot = () =>
+    JSON.stringify({ type: "snapshot", feed: currentFeed(), teamScore: teamScore() });
+  wss.on("connection", (socket) => socket.send(snapshot()));
 
   /**
    * Backfill: rebuild the Feed from the GitHub API so a fresh boot is never blank and
@@ -213,7 +240,17 @@ export async function startServer(port: number, options: Options = {}) {
 
     const payload = JSON.parse(req.body.toString("utf8"));
     const event = toDomainEvent(req.header("x-github-event"), payload);
-    if (event && trackedRepos.includes(event.repo)) recordEvent(event, now());
+    if (event && trackedRepos.includes(event.repo)) {
+      const earned = recordEvent(event);
+      // null = repeat of something already in the Feed (e.g. Backfill got there
+      // first): no state change, so nothing to tell the displays.
+      if (earned !== null) {
+        for (const client of wss.clients) client.send(JSON.stringify(event));
+        // A Celebration Event moved the Team Score: follow it with a fresh snapshot
+        // rather than inventing a second message shape for one number.
+        if (earned) for (const client of wss.clients) client.send(snapshot());
+      }
+    }
     res.sendStatus(204);
   });
 

@@ -17,6 +17,14 @@ const idle = new Text({
 idle.position.set(24, 24);
 app.stage.addChild(idle);
 
+// Placeholder Team Score: plain text, marquee styling comes later.
+const scoreText = new Text({
+  text: "TEAM SCORE 0",
+  style: { fill: 0xffe066, fontFamily: "monospace", fontSize: 32 },
+});
+scoreText.position.set(280, 24);
+app.stage.addChild(scoreText);
+
 // Placeholder Feed: plain text lines, arcade theme comes later.
 const feedText = new Text({
   text: "",
@@ -45,7 +53,8 @@ function renderFeed() {
 // An idle board still has to age entries out; a minute of granularity is plenty.
 setInterval(renderFeed, 60_000);
 
-// Protocol: {type:"snapshot", feed:[...]} on connect, then bare domain events.
+// Protocol: {type:"snapshot", feed:[...], teamScore:N} on connect and again after
+// every Celebration Event, then bare domain events.
 let backoff = 500;
 function connect() {
   const socket = new WebSocket(`ws://${location.host}`);
@@ -58,6 +67,7 @@ function connect() {
     const data = JSON.parse(message.data);
     if (data.type === "snapshot") {
       feed = data.feed.map(stamp);
+      scoreText.text = `TEAM SCORE ${data.teamScore}`;
     } else {
       feed.push(stamp(data));
       if (CELEBRATIONS.has(data.type)) {

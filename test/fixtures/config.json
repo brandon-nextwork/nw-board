@@ -3,5 +3,9 @@
     "example-org/projects-app",
     "example-org/features",
     "example-org/content"
-  ]
+  ],
+  "points": {
+    "pr-merged": 70,
+    "review-approved": 9
+  }
 }

@@ -294,6 +294,7 @@ test("a display connecting receives a snapshot of the Feed reflecting earlier ev
 
   expect(snapshot).toEqual({
     type: "snapshot",
+    teamScore: 70,
     feed: [
       {
         type: "pr-merged",
