@@ -59,6 +59,9 @@ function toDomainEvent(
 /** Celebration Events are the loud ones; everything else is an Ambient Event. */
 const CELEBRATIONS = new Set(["pr-merged", "review-approved"]);
 
+/** The events that add to or remove from the list of currently open PRs. */
+const IN_FLIGHT_CHANGES = new Set(["pr-opened", "pr-merged", "pr-closed"]);
+
 /** "09:00" -> 540 minutes past local midnight. Anything else is a config error. */
 function minutesOfDay(value: unknown, complaint: string) {
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value));
@@ -126,18 +129,32 @@ export async function startServer(port: number, options: Options = {}) {
   const DAY_MS = 24 * 60 * 60 * 1000;
   const currentFeed = () => {
     while (feed.length && now() - feed[0]!.at >= DAY_MS) feed.shift();
-    return feed.map((entry) => entry.event);
+    // Each entry carries the timestamp it was recorded at, so a display expires it
+    // by when it happened rather than when the snapshot happened to arrive.
+    return feed.map(({ at, event }) => ({ ...event, at }));
   };
+
+  // The currently open PRs: board state rather than a 24h event, so an open PR sits
+  // on the board however long ago it was opened. Backfill fills it; a pr-opened adds,
+  // a pr-merged or pr-closed removes.
+  const openPrs: { repo: string; number: number; title: string }[] = [];
 
   // The Team Score: this week's Celebration Event points. Derived on read, so the
   // weekly reset needs no timer — crossing Monday 00:00 simply zeroes it.
   let score = 0;
   let scoreWeek = startOfWeek(now());
+  // The event types Backfill can rediscover after a restart, so a repeat delivery of
+  // one is the same event rather than a new one. Kept for the whole score week (not
+  // the Feed's 24h) so a redelivered merge cannot score twice. Ambient repeats — a
+  // second comment or a second changes-requested review — are genuinely new events.
+  const BACKFILLED = new Set(["pr-merged", "pr-opened", "review-approved"]);
+  const seen = new Set<string>();
   const teamScore = () => {
     const week = startOfWeek(now());
     if (week !== scoreWeek) {
       scoreWeek = week;
       score = 0;
+      seen.clear();
     }
     return score;
   };
@@ -145,21 +162,30 @@ export async function startServer(port: number, options: Options = {}) {
   /**
    * The one path into state: append to the Feed and credit the Team Score.
    * Webhooks and Backfill both land here (Backfill with the event's real `at`),
-   * so the weekly score rebuilds from Backfill for free. Repeats of an event
-   * already in the Feed (same type/repo/number) are dropped — that's what stops
-   * a webhook duplicating what Backfill already fetched. Returns the points
-   * credited (0 for Ambient Events and older weeks), or null for a dropped repeat.
+   * so the weekly score rebuilds from Backfill for free. Repeats of a Backfillable
+   * event (same type/repo/number, this week) are dropped — that's what stops a
+   * webhook duplicating what Backfill already fetched. Returns the points credited
+   * (0 for Ambient Events and older weeks), or null for a dropped repeat.
    */
   const recordEvent = (event: DomainEvent, at: number = now()): number | null => {
-    const known = feed.some(
-      ({ event: seen }) =>
-        seen.type === event.type &&
-        seen.repo === event.repo &&
-        seen.number === event.number,
-    );
-    if (known) return null;
+    // An event with no parseable timestamp (a Backfilled PR missing created_at, say)
+    // would sit in the Feed forever: the expiry loop stops at the first entry it
+    // cannot age out. Undateable is unshowable, so drop it.
+    if (!Number.isFinite(at)) return null;
+    teamScore(); // roll the week over before deduping or crediting
+    const key = `${event.type}/${event.repo}/${event.number}`;
+    if (BACKFILLED.has(event.type)) {
+      if (seen.has(key)) return null;
+      seen.add(key);
+    }
     feed.push({ at, event });
-    teamScore(); // roll the week over before crediting
+    const { type, repo, number, title } = event;
+    const open = openPrs.findIndex(
+      (pr) => pr.repo === repo && pr.number === number,
+    );
+    if (type === "pr-opened" && open < 0) openPrs.push({ repo, number, title });
+    if ((type === "pr-merged" || type === "pr-closed") && open >= 0)
+      openPrs.splice(open, 1);
     const earned = startOfWeek(at) === scoreWeek ? (points[event.type] ?? 0) : 0;
     score += earned;
     return earned;
@@ -171,8 +197,11 @@ export async function startServer(port: number, options: Options = {}) {
   const wss = new WebSocketServer({ server: http });
 
   // Display protocol (server -> client only):
-  //   on connect: {"type":"snapshot","feed":[<domain event>, ...],"teamScore":<number>}
-  //               (feed oldest first)
+  //   on connect: {"type":"snapshot","feed":[{<domain event>, "at":<ms>}, ...],
+  //                "teamScore":<number>,"openPrs":[{repo, number, title}, ...]}
+  //               feed is oldest first and holds the last 24h, each entry stamped with
+  //               the server time it happened; openPrs is the current set of open PRs
+  //               (state, so no 24h expiry) — what's in flight now.
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title}
   //               Celebration Events carry "audible": true|false — Quiet Hours decided
   //               at delivery time. Ambient Events never make sound, so carry no flag.
@@ -185,6 +214,7 @@ export async function startServer(port: number, options: Options = {}) {
     type: "snapshot",
     feed: currentFeed(),
     teamScore: teamScore(),
+    openPrs,
   });
   wss.on("connection", (socket) => socket.send(JSON.stringify(snapshot())));
 
@@ -206,49 +236,73 @@ export async function startServer(port: number, options: Options = {}) {
     const weekStart = startOfWeek(now());
     const entries: { at: number; event: DomainEvent }[] = [];
 
-    const pulls = async (repo: string, query: string) => {
-      const response = await fetch(`${apiBase}/repos/${repo}/pulls?${query}`, {
+    /** GET a list under /repos, e.g. "owner/name/pulls?state=open". */
+    const get = async (path: string) => {
+      const response = await fetch(`${apiBase}/repos/${path}`, {
         headers: {
           authorization: `Bearer ${token}`,
           accept: "application/vnd.github+json",
         },
       });
       if (!response.ok)
-        throw new Error(`GitHub API ${response.status} for ${repo}?${query}`);
+        throw new Error(`GitHub API ${response.status} for ${path}`);
       return (await response.json()) as any[];
     };
 
     for (const repo of trackedRepos) {
-      for (const pr of await pulls(repo, "state=open&per_page=100")) {
+      // PRs touched this week, whose reviews may hold this week's approvals.
+      const active: any[] = [];
+      for (const pr of await get(`${repo}/pulls?state=open&per_page=100`)) {
         entries.push({
           at: Date.parse(pr.created_at),
           event: { type: "pr-opened", repo, number: pr.number, title: pr.title },
         });
+        if (Date.parse(pr.updated_at) >= weekStart) active.push(pr);
       }
-      // Closed PRs come back newest-updated first, so we can stop the moment a page
-      // runs past the start of the week.
-      for (let page = 1, done = false; !done; page++) {
-        const closed = await pulls(
-          repo,
-          `state=closed&sort=updated&direction=desc&per_page=100&page=${page}`,
-        );
-        done = closed.length < 100;
-        for (const pr of closed) {
-          if (Date.parse(pr.updated_at) < weekStart) {
-            done = true;
-            break;
-          }
-          const mergedAt = pr.merged_at ? Date.parse(pr.merged_at) : 0;
-          if (mergedAt >= weekStart)
-            entries.push({
-              at: mergedAt,
-              event: {
-                type: "pr-merged",
-                repo,
-                number: pr.number,
-                title: pr.title,
-              },
-            });
+      // Closed PRs come back newest-updated first, so we can stop at the first one
+      // that predates the week.
+      // ponytail: one page per repo — the ceiling is 100 closed PRs per repo per
+      // week; page through only if a repo ever outruns that.
+      for (const pr of await get(
+        `${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`,
+      )) {
+        if (Date.parse(pr.updated_at) < weekStart) break;
+        active.push(pr);
+        const mergedAt = pr.merged_at ? Date.parse(pr.merged_at) : 0;
+        if (mergedAt >= weekStart)
+          entries.push({
+            at: mergedAt,
+            event: {
+              type: "pr-merged",
+              repo,
+              number: pr.number,
+              title: pr.title,
+            },
+          });
+      }
+      // Approvals are Celebration Events, so the Team Score only survives a restart
+      // if this week's are refetched too. One request per PR touched this week; a
+      // repo that refuses the read loses its approvals, not the whole Backfill.
+      for (const pr of active) {
+        let reviews: any[];
+        try {
+          reviews = await get(`${repo}/pulls/${pr.number}/reviews`);
+        } catch (error) {
+          console.warn(`Backfill skipped reviews for ${repo}#${pr.number}: ${error}`);
+          continue;
+        }
+        for (const review of reviews) {
+          const at = Date.parse(review.submitted_at);
+          if (review.state !== "APPROVED" || !(at >= weekStart)) continue;
+          entries.push({
+            at,
+            event: {
+              type: "review-approved",
+              repo,
+              number: pr.number,
+              title: pr.title,
+            },
+          });
         }
       }
     }
@@ -279,7 +333,7 @@ export async function startServer(port: number, options: Options = {}) {
     const event = toDomainEvent(req.header("x-github-event"), payload);
     if (event && trackedRepos.includes(event.repo)) {
       const earned = recordEvent(event);
-      // null = repeat of something already in the Feed (e.g. Backfill got there
+      // null = repeat of something already recorded (e.g. Backfill got there
       // first): no state change, so nothing to tell the displays.
       if (earned !== null) {
         broadcast(
@@ -287,9 +341,10 @@ export async function startServer(port: number, options: Options = {}) {
             ? { ...event, audible: soundAllowed() }
             : event,
         );
-        // A Celebration Event moved the Team Score: follow it with a fresh snapshot
-        // rather than inventing a second message shape for one number.
-        if (earned) broadcast(snapshot());
+        // A Celebration Event moved the Team Score, and an open/merged/closed moved the
+        // in-flight list: follow either with a fresh snapshot rather than inventing a
+        // second message shape for state the snapshot already carries.
+        if (earned || IN_FLIGHT_CHANGES.has(event.type)) broadcast(snapshot());
       }
     }
     res.sendStatus(204);
@@ -310,10 +365,17 @@ export async function startServer(port: number, options: Options = {}) {
   let fired = "";
   const scheduler = setInterval(() => {
     const at = new Date(now());
+    // The Team Score resets on read, so a display connected across Monday 00:00 would
+    // keep last week's number until something else happened. `snapshot()` reads (and
+    // so rolls) the week, which is why this fires once rather than every tick.
+    if (startOfWeek(at.getTime()) !== scoreWeek) broadcast(snapshot());
     const hhmm = `${at.getHours()}`.padStart(2, "0") + ":" + `${at.getMinutes()}`.padStart(2, "0");
     const minute = `${at.toDateString()} ${hhmm}`;
     if (fired === minute || !isWeekday(at) || !chimes.includes(hhmm)) return;
     fired = minute;
+    // By design: a chime that lands while no display is connected is dropped, not
+    // replayed later. This is a display-only board, and a stale 09:00 chime at 09:20
+    // is worse than silence.
     broadcast({ type: "day-chime", at: hhmm });
   }, options.tickMs ?? 30_000);
 
