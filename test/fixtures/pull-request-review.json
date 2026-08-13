@@ -1,0 +1,6 @@
+{
+  "action": "submitted",
+  "review": { "state": "approved" },
+  "pull_request": { "number": 7, "title": "Wire up the Feed" },
+  "repository": { "full_name": "example-org/features" }
+}
