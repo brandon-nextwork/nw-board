@@ -4,9 +4,13 @@
 
 **Blocked by:** 02 — Full event vocabulary, Feed, and snapshots.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] With the GitHub API stubbed to return open PRs and recent events, a client connecting right after boot receives a snapshot containing them
-- [ ] Backfilled and webhook-delivered versions of the same event don't double-appear in the Feed
-- [ ] A Backfill failure (API error) leaves the server running and serving live webhook events, not crashed
-- [ ] Asserted at the server seam with the API stub
+- [x] With the GitHub API stubbed to return open PRs and recent events, a client connecting right after boot receives a snapshot containing them
+- [x] Backfilled and webhook-delivered versions of the same event don't double-appear in the Feed
+- [x] A Backfill failure (API error) leaves the server running and serving live webhook events, not crashed
+- [x] Asserted at the server seam with the API stub
+
+## Comments
+
+Built in a parallel worktree, merged, then fixed after combined adversarial review: open PRs became board state (visible however old), approvals are backfilled for the week's score, dedup memory now spans the score week, NaN timestamps guarded. 63 seam tests green.
