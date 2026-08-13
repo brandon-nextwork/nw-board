@@ -3,5 +3,9 @@
     "nextworkengineering/projects-app",
     "nextworkengineering/features",
     "nextworkengineering/content"
-  ]
+  ],
+  "points": {
+    "pr-merged": 70,
+    "review-approved": 9
+  }
 }
