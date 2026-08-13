@@ -68,12 +68,18 @@ export async function startServer(port: number, options: Options = {}) {
 
   const configPath =
     options.configPath ?? fileURLToPath(new URL("../config.json", import.meta.url));
-  const trackedRepos: string[] = JSON.parse(
-    readFileSync(configPath, "utf8"),
-  ).trackedRepos;
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const trackedRepos: string[] = config.trackedRepos;
   // A missing list would 400 every delivery; a bare string would match repos by substring.
   if (!Array.isArray(trackedRepos))
     throw new Error(`${configPath}: trackedRepos must be a list of "owner/name"`);
+
+  // Point values for the Celebration Events. Refuse to boot rather than score
+  // every merge as zero because someone fat-fingered the config.
+  const points: Record<string, number> = config.points ?? {};
+  for (const type of ["pr-merged", "review-approved"])
+    if (typeof points[type] !== "number")
+      throw new Error(`${configPath}: points.${type} must be a number`);
 
   const now = options.now ?? Date.now;
 
@@ -85,18 +91,53 @@ export async function startServer(port: number, options: Options = {}) {
     return feed.map((entry) => entry.event);
   };
 
+  /** Monday 00:00 local time on or before `at` — the week the Team Score belongs to. */
+  const weekStart = (at: number) => {
+    const day = new Date(at);
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() - ((day.getDay() + 6) % 7)); // getDay() is 0 on Sunday
+    return day.getTime();
+  };
+
+  // The Team Score: this week's Celebration Event points. Derived on read, so the
+  // weekly reset needs no timer — crossing Monday 00:00 simply zeroes it.
+  let score = 0;
+  let scoreWeek = weekStart(now());
+  const teamScore = () => {
+    const week = weekStart(now());
+    if (week !== scoreWeek) {
+      scoreWeek = week;
+      score = 0;
+    }
+    return score;
+  };
+
+  /**
+   * The one path into state: append to the Feed and credit the Team Score.
+   * Backfill records past events through here too, hence the explicit `at`.
+   * Returns the points credited (0 for Ambient Events and older weeks).
+   */
+  function recordEvent(event: DomainEvent, at: number = now()): number {
+    feed.push({ at, event });
+    teamScore(); // roll the week over before crediting
+    const earned = weekStart(at) === scoreWeek ? (points[event.type] ?? 0) : 0;
+    score += earned;
+    return earned;
+  }
+
   const app = express();
   app.use(express.static(fileURLToPath(new URL("../public", import.meta.url))));
   const http = createServer(app);
   const wss = new WebSocketServer({ server: http });
 
   // Display protocol (server -> client only):
-  //   on connect: {"type":"snapshot","feed":[<domain event>, ...]}  (oldest first)
+  //   on connect: {"type":"snapshot","feed":[<domain event>, ...],"teamScore":<number>}
+  //               (feed oldest first)
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title}
   // No domain event type is called "snapshot", so `type` alone tells them apart.
-  wss.on("connection", (socket) =>
-    socket.send(JSON.stringify({ type: "snapshot", feed: currentFeed() })),
-  );
+  const snapshot = () =>
+    JSON.stringify({ type: "snapshot", feed: currentFeed(), teamScore: teamScore() });
+  wss.on("connection", (socket) => socket.send(snapshot()));
 
   app.post("/webhook", express.raw({ type: "*/*", limit: "5mb" }), (req, res) => {
     if (!Buffer.isBuffer(req.body)) {
@@ -118,8 +159,11 @@ export async function startServer(port: number, options: Options = {}) {
     const payload = JSON.parse(req.body.toString("utf8"));
     const event = toDomainEvent(req.header("x-github-event"), payload);
     if (event && trackedRepos.includes(event.repo)) {
-      feed.push({ at: now(), event });
+      const earned = recordEvent(event);
       for (const client of wss.clients) client.send(JSON.stringify(event));
+      // A Celebration Event moved the Team Score: follow it with a fresh snapshot
+      // rather than inventing a second message shape for one number.
+      if (earned) for (const client of wss.clients) client.send(snapshot());
     }
     res.sendStatus(204);
   });
