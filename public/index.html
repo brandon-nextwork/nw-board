@@ -4,7 +4,10 @@
     <meta charset="utf-8" />
     <title>PR Arcade</title>
     <style>
-      body { margin: 0; background: #101020; overflow: hidden; }
+      /* Kiosk chrome: black surround for the letterboxed 1080p scene, no cursor. */
+      html, body { height: 100%; }
+      body { margin: 0; background: #000; overflow: hidden; cursor: none; }
+      canvas { display: block; }
     </style>
   </head>
   <body>
