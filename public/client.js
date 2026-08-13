@@ -33,17 +33,25 @@ const feedText = new Text({
 feedText.position.set(24, 80);
 app.stage.addChild(feedText);
 
+// Placeholder in-flight list: the currently open PRs, state rather than 24h events.
+const openPrsText = new Text({
+  text: "",
+  style: { fill: 0x66ddaa, fontFamily: "monospace", fontSize: 20 },
+});
+openPrsText.position.set(24, 560);
+app.stage.addChild(openPrsText);
+
 const CELEBRATIONS = new Set(["pr-merged", "review-approved"]);
 const DAY_MS = 24 * 60 * 60 * 1000;
 let feed = [];
 
 // The server only expires the Feed when it builds a snapshot, so a display left
-// connected for days has to drop its own stale entries. Snapshot entries arrive
-// already inside the window, so stamping them on receipt is close enough.
-const stamp = (event) => ({ ...event, receivedAt: Date.now() });
+// connected for days has to drop its own stale entries. Snapshot entries carry the
+// server time they happened at; a live event is happening right now.
+const stamp = (event) => ({ ...event, at: event.at ?? Date.now() });
 
 function renderFeed() {
-  feed = feed.filter((e) => Date.now() - e.receivedAt < DAY_MS);
+  feed = feed.filter((e) => Date.now() - e.at < DAY_MS);
   feedText.text = feed
     .slice(-20)
     .map((e) => `${e.type.padEnd(18)} ${e.repo} #${e.number}  ${e.title}`)
@@ -92,10 +100,10 @@ function play(notes) {
   }
 }
 
-// Protocol: {type:"snapshot", feed:[...], teamScore:N} on connect and again after
-// every Celebration Event, then bare domain events; Celebration Events carry
-// audible:true|false (Quiet Hours), and {type:"day-chime"} marks the start and
-// end of the workday.
+// Protocol: {type:"snapshot", feed:[{...event, at}], teamScore:N, openPrs:[...]} on
+// connect and again whenever the score or the in-flight list moves, then bare domain
+// events; Celebration Events carry audible:true|false (Quiet Hours), and
+// {type:"day-chime"} marks the start and end of the workday.
 let backoff = 500;
 function connect() {
   const socket = new WebSocket(`ws://${location.host}`);
@@ -113,6 +121,10 @@ function connect() {
     if (data.type === "snapshot") {
       feed = data.feed.map(stamp);
       scoreText.text = `TEAM SCORE ${data.teamScore}`;
+      openPrsText.text = [
+        "IN FLIGHT",
+        ...data.openPrs.map((pr) => `${pr.repo} #${pr.number}  ${pr.title}`),
+      ].join("\n");
     } else {
       feed.push(stamp(data));
       if (CELEBRATIONS.has(data.type)) {

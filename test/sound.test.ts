@@ -1,29 +1,20 @@
-import { createHmac } from "node:crypto";
-import { once } from "node:events";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, expect, test } from "vitest";
-import { WebSocket } from "ws";
 import { startServer } from "../src/server.ts";
+import {
+  badConfigPath,
+  configPath,
+  connectedDisplay,
+  mergedBody,
+  postAndWatch,
+} from "./helpers.ts";
 
-const SECRET = "test-webhook-secret";
-process.env.GITHUB_WEBHOOK_SECRET = SECRET;
-
-const mergedBody = readFileSync(
-  new URL("./fixtures/pull-request-merged.json", import.meta.url),
-  "utf8",
-);
 const merged = JSON.parse(mergedBody);
 const openedBody = JSON.stringify({
   ...merged,
   action: "opened",
   pull_request: { ...merged.pull_request, merged: false },
 });
-
-const configPath = fileURLToPath(
-  new URL("./fixtures/config.json", import.meta.url),
-);
 
 /**
  * Quiet Hours and Day Chimes are local-time rules, so the clock the tests drive is
@@ -40,36 +31,6 @@ afterEach(async () => {
   running = undefined;
 });
 
-const postWebhook = (port: number, body: string) =>
-  fetch(`http://127.0.0.1:${port}/webhook`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-github-event": "pull_request",
-      "x-hub-signature-256":
-        "sha256=" + createHmac("sha256", SECRET).update(body).digest("hex"),
-    },
-    body: new TextEncoder().encode(body),
-  });
-
-/** Connect a display, recording every protocol message from the moment it opens. */
-async function connectedDisplay(port: number) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-  const messages: any[] = [];
-  ws.on("message", (data) => messages.push(JSON.parse(String(data))));
-  await once(ws, "open");
-  return { ws, messages };
-}
-
-/** POST a webhook and collect the live messages the display received afterwards. */
-async function postAndWatch(port: number, body: string) {
-  const { ws, messages } = await connectedDisplay(port);
-  await postWebhook(port, body);
-  await sleep(50);
-  ws.close();
-  return messages.filter((message) => message.type !== "snapshot");
-}
-
 test.for([
   ["inside the sound window on a weekday is flagged audible", at(THURSDAY, 10, 0), true],
   ["before the sound window opens is flagged silent", at(THURSDAY, 8, 59), false],
@@ -81,7 +42,7 @@ test.for([
   async ([, clock, audible]) => {
     running = await startServer(0, { configPath, now: () => clock as number });
 
-    const received = await postAndWatch(running.port, mergedBody);
+    const { received } = await postAndWatch(running.port, { body: mergedBody });
 
     expect(received).toEqual([
       {
@@ -101,7 +62,7 @@ test("an Ambient Event carries no audible flag even inside the sound window", as
     now: () => at(THURSDAY, 10, 0),
   });
 
-  const received = await postAndWatch(running.port, openedBody);
+  const { received } = await postAndWatch(running.port, { body: openedBody });
 
   expect(received).toEqual([
     {
@@ -154,11 +115,7 @@ test.for([
   ["a Quiet Hours window that is not HH:MM", "config-bad-quiet-hours.json", /quietHours/],
   ["a chime list that is not a list", "config-chimes-not-a-list.json", /chimes/],
 ])("the server refuses to start when the config has %s", async ([, file, message]) => {
-  const badConfig = fileURLToPath(
-    new URL(`./fixtures/${file}`, import.meta.url),
-  );
-
-  await expect(startServer(0, { configPath: badConfig })).rejects.toThrow(
-    message as RegExp,
-  );
+  await expect(
+    startServer(0, { configPath: badConfigPath(file as string) }),
+  ).rejects.toThrow(message as RegExp);
 });

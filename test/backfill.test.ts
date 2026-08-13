@@ -1,21 +1,18 @@
-import { createHmac } from "node:crypto";
-import { once } from "node:events";
-import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import type { AddressInfo } from "node:net";
 import { afterEach, expect, test } from "vitest";
-import { WebSocket } from "ws";
 import { startServer } from "../src/server.ts";
+import {
+  configPath,
+  connectedDisplay,
+  postWebhook,
+  readSnapshot as connectAndReadSnapshot,
+} from "./helpers.ts";
 
-const SECRET = "test-webhook-secret";
-process.env.GITHUB_WEBHOOK_SECRET = SECRET;
+// Backfill is the one thing that talks to the GitHub API, so it is the one test file
+// that sets a token — always pointed at the stub base below, never api.github.com.
 process.env.GITHUB_TOKEN = "test-pat";
-
-const configPath = fileURLToPath(
-  new URL("./fixtures/config.json", import.meta.url),
-);
 
 // Friday, so "three days ago" is still inside the current week (Mon 00:00).
 const NOW = Date.parse("2026-08-14T17:00:00Z");
@@ -57,34 +54,6 @@ async function stubGitHubApi(handler: (url: string) => unknown) {
 const start = (githubApiBase: string) =>
   startServer(0, { configPath, now: () => NOW, githubApiBase });
 
-/** Connect a display and read the snapshot it is sent on connect. */
-async function connectAndReadSnapshot(port: number) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-  const messages: any[] = [];
-  ws.on("message", (data) => messages.push(JSON.parse(String(data))));
-  await once(ws, "open");
-  await sleep(50);
-  ws.close();
-  return messages[0];
-}
-
-const mergedBody = readFileSync(
-  new URL("./fixtures/pull-request-merged.json", import.meta.url),
-  "utf8",
-);
-
-const postWebhook = (port: number, body = mergedBody) =>
-  fetch(`http://127.0.0.1:${port}/webhook`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-github-event": "pull_request",
-      "x-hub-signature-256":
-        "sha256=" + createHmac("sha256", SECRET).update(body).digest("hex"),
-    },
-    body: new TextEncoder().encode(body),
-  });
-
 /** Answers for one Tracked Repo; the other Tracked Repos have nothing. */
 const onlyProjectsApp =
   (open: unknown[], closed: unknown[]) => (url: string) => {
@@ -116,18 +85,21 @@ test("a display connecting right after boot receives a snapshot of the backfille
   running = await start(api.base);
 
   const snapshot = await connectAndReadSnapshot(running!.port);
+  // Backfilled entries keep the GitHub timestamps they actually happened at.
   expect(snapshot.feed).toEqual([
     {
       type: "pr-opened",
       repo: "example-org/projects-app",
       number: 1,
       title: "Open one",
+      at: NOW - 2 * HOUR,
     },
     {
       type: "pr-merged",
       repo: "example-org/projects-app",
       number: 2,
       title: "Merged one",
+      at: NOW - HOUR,
     },
   ]);
   expect(api.requests[0]!.authorization).toContain("test-pat");
@@ -156,7 +128,7 @@ test.for([
     const response = await postWebhook(running!.port);
     expect(response.status).toBe(204);
     const snapshot = await connectAndReadSnapshot(running!.port);
-    expect(snapshot.feed).toEqual([mergedEvent]);
+    expect(snapshot.feed).toEqual([{ ...mergedEvent, at: NOW }]);
   },
 );
 
@@ -178,8 +150,38 @@ test("a webhook for a PR that Backfill already recorded does not duplicate the F
 
   await postWebhook(running!.port);
 
+  // Backfill got there first, so the entry keeps the merge time GitHub reported.
   const snapshot = await connectAndReadSnapshot(running!.port);
-  expect(snapshot.feed).toEqual([mergedEvent]);
+  expect(snapshot.feed).toEqual([{ ...mergedEvent, at: NOW - HOUR }]);
+});
+
+test("a redelivered webhook for a merge Backfill recorded more than 24 hours ago scores once", async () => {
+  const api = await stubGitHubApi(
+    onlyProjectsApp(
+      [],
+      [
+        {
+          number: 42,
+          title: "Add arcade scene renderer",
+          updated_at: ago(72 * HOUR),
+          merged_at: ago(72 * HOUR),
+        },
+      ],
+    ),
+  );
+  running = await start(api.base);
+
+  // Reading a snapshot expires the Backfilled merge out of the 24h Feed; the merge
+  // still counts towards this week's Team Score, so a redelivery must not re-score it.
+  const backfilled = await connectAndReadSnapshot(running!.port);
+  const { ws, messages } = await connectedDisplay(running!.port);
+  await postWebhook(running!.port);
+  await sleep(50);
+  ws.close();
+
+  expect(backfilled.teamScore).toBe(70);
+  expect(messages.filter((m) => m.type !== "snapshot")).toEqual([]);
+  expect((await connectAndReadSnapshot(running!.port)).teamScore).toBe(70);
 });
 
 test("Backfilled events older than 24 hours are kept out of the Feed snapshot", async () => {
@@ -212,8 +214,91 @@ test("Backfilled events older than 24 hours are kept out of the Feed snapshot", 
       repo: "example-org/projects-app",
       number: 3,
       title: "Merged an hour ago",
+      at: NOW - HOUR,
     },
   ]);
+  // The open PR is state, not a 24h event: it stays on the board however old it is.
+  expect(snapshot.openPrs).toEqual([
+    {
+      repo: "example-org/projects-app",
+      number: 1,
+      title: "Stale open one",
+    },
+  ]);
+});
+
+test("Backfill rebuilds this week's review approvals into the Team Score", async () => {
+  const DAY = 24 * HOUR;
+  const api = await stubGitHubApi((url) => {
+    if (!url.includes("/example-org/projects-app/")) return [];
+    if (url.includes("/pulls/7/reviews"))
+      return [
+        // Last week's approval: already scored in a week that has ended.
+        { state: "APPROVED", submitted_at: ago(10 * DAY) },
+        { state: "APPROVED", submitted_at: ago(2 * HOUR) },
+        { state: "CHANGES_REQUESTED", submitted_at: ago(HOUR) },
+      ];
+    if (url.includes("state=open"))
+      return [
+        {
+          number: 7,
+          title: "Wire up the Feed",
+          created_at: ago(3 * HOUR),
+          updated_at: ago(HOUR),
+        },
+      ];
+    return [];
+  });
+
+  running = await start(api.base);
+
+  const snapshot = await connectAndReadSnapshot(running!.port);
+  expect(snapshot.teamScore).toBe(9);
+  expect(snapshot.feed).toEqual([
+    {
+      type: "pr-opened",
+      repo: "example-org/projects-app",
+      number: 7,
+      title: "Wire up the Feed",
+      at: NOW - 3 * HOUR,
+    },
+    {
+      type: "review-approved",
+      repo: "example-org/projects-app",
+      number: 7,
+      title: "Wire up the Feed",
+      at: NOW - 2 * HOUR,
+    },
+  ]);
+});
+
+test("a Backfilled PR with no usable timestamp does not freeze Feed expiry", async () => {
+  const api = await stubGitHubApi(
+    onlyProjectsApp(
+      // No created_at at all: nothing to place it in the 24h window with.
+      [{ number: 1, title: "Undated open one" }],
+      [
+        {
+          number: 3,
+          title: "Merged an hour ago",
+          updated_at: ago(HOUR),
+          merged_at: ago(HOUR),
+        },
+      ],
+    ),
+  );
+  let clock = NOW;
+  running = await startServer(0, {
+    configPath,
+    now: () => clock,
+    githubApiBase: api.base,
+  });
+
+  clock = NOW + 48 * HOUR;
+
+  // The undated entry must not sit at the head of the Feed blocking every expiry
+  // behind it — two days on, nothing from before the boot is left.
+  expect((await connectAndReadSnapshot(running!.port)).feed).toEqual([]);
 });
 
 test("a missing GITHUB_TOKEN skips Backfill instead of crashing the server", async () => {
@@ -232,6 +317,6 @@ test("a missing GITHUB_TOKEN skips Backfill instead of crashing the server", asy
 
   expect((await postWebhook(running!.port)).status).toBe(204);
   const snapshot = await connectAndReadSnapshot(running!.port);
-  expect(snapshot.feed).toEqual([mergedEvent]);
+  expect(snapshot.feed).toEqual([{ ...mergedEvent, at: NOW }]);
   expect(api.requests).toEqual([]);
 });

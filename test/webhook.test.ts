@@ -1,29 +1,20 @@
-import { createHmac } from "node:crypto";
-import { once } from "node:events";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, expect, test } from "vitest";
-import { WebSocket } from "ws";
 import { startServer } from "../src/server.ts";
+import {
+  type PostOptions,
+  badConfigPath,
+  configPath,
+  connectedDisplay,
+  fixture,
+  mergedBody as rawBody,
+  postAndWatch,
+  postWebhook,
+  readSnapshot as connectAndReadSnapshot,
+  SECRET,
+  sign,
+} from "./helpers.ts";
 
-const SECRET = "test-webhook-secret";
-process.env.GITHUB_WEBHOOK_SECRET = SECRET;
-// Backfill belongs to backfill.test.ts; without a token these tests never reach the
-// GitHub API, whatever the shell running them has exported.
-delete process.env.GITHUB_TOKEN;
-
-const rawBody = readFileSync(
-  new URL("./fixtures/pull-request-merged.json", import.meta.url),
-  "utf8",
-);
-
-const sign = (body: string, secret = SECRET) =>
-  "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
-
-const configPath = fileURLToPath(
-  new URL("./fixtures/config.json", import.meta.url),
-);
 // Celebration Events are flagged by Quiet Hours, so the default clock is pinned inside
 // the sound window (Thursday 2026-08-13, 10:00 local) rather than left to wall time.
 const IN_THE_SOUND_WINDOW = new Date(2026, 7, 13, 10, 0).getTime();
@@ -35,56 +26,6 @@ afterEach(async () => {
   await running?.close();
   running = undefined;
 });
-
-type PostOptions = {
-  body?: string;
-  event?: string;
-  signature?: string;
-  contentType?: string;
-};
-
-const postWebhook = (
-  port: number,
-  {
-    body = rawBody,
-    event = "pull_request",
-    signature = sign(body),
-    contentType = "application/json",
-  }: PostOptions = {},
-) =>
-  fetch(`http://127.0.0.1:${port}/webhook`, {
-    method: "POST",
-    headers: {
-      ...(contentType ? { "content-type": contentType } : {}),
-      "x-github-event": event,
-      ...(signature ? { "x-hub-signature-256": signature } : {}),
-    },
-    // Uint8Array so fetch adds no Content-Type of its own when we omit it.
-    body: new TextEncoder().encode(body),
-  });
-
-/** Connect a display, recording every protocol message from the moment it opens. */
-async function connectedDisplay(port: number) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-  const messages: any[] = [];
-  ws.on("message", (data) => messages.push(JSON.parse(String(data))));
-  await once(ws, "open");
-  return { ws, messages };
-}
-
-/** POST a webhook and collect the domain events the display received afterwards. */
-async function postAndWatch(port: number, options?: PostOptions) {
-  const { ws, messages } = await connectedDisplay(port);
-
-  const response = await postWebhook(port, options);
-  await sleep(50);
-  ws.close();
-  // The snapshot sent on connect is asserted separately.
-  return {
-    status: response.status,
-    received: messages.filter((message) => message.type !== "snapshot"),
-  };
-}
 
 test("a signed merged-PR webhook from a Tracked Repo pushes a pr-merged Celebration Event to the display", async () => {
   running = await start();
@@ -120,13 +61,13 @@ test.for([
   },
 );
 
-const fixture = JSON.parse(rawBody);
+const merged = JSON.parse(rawBody);
 
 test("a merged-PR webhook with a very long PR description still pushes the Celebration Event", async () => {
   running = await start();
   const body = JSON.stringify({
-    ...fixture,
-    pull_request: { ...fixture.pull_request, body: "x".repeat(200_000) },
+    ...merged,
+    pull_request: { ...merged.pull_request, body: "x".repeat(200_000) },
   });
 
   const { status, received } = await postAndWatch(running.port, { body });
@@ -143,21 +84,15 @@ test("a merged-PR webhook with a very long PR description still pushes the Celeb
   ]);
 });
 
-const reviewBody = readFileSync(
-  new URL("./fixtures/pull-request-review.json", import.meta.url),
-  "utf8",
-);
+const reviewBody = fixture("pull-request-review.json");
 const review = JSON.parse(reviewBody);
-const commentBody = readFileSync(
-  new URL("./fixtures/issue-comment.json", import.meta.url),
-  "utf8",
-);
+const commentBody = fixture("issue-comment.json");
 
 const withPullRequest = (patch: Record<string, unknown>) =>
   JSON.stringify({
-    ...fixture,
+    ...merged,
     ...patch,
-    pull_request: { ...fixture.pull_request, merged: false },
+    pull_request: { ...merged.pull_request, merged: false },
   });
 
 test.for([
@@ -269,7 +204,7 @@ test.for([
 test("a merged-PR webhook from a repo that is not a Tracked Repo is accepted but pushes no domain event", async () => {
   running = await start();
   const body = JSON.stringify({
-    ...fixture,
+    ...merged,
     repository: { full_name: "someone-else/not-our-repo" },
   });
 
@@ -280,14 +215,6 @@ test("a merged-PR webhook from a repo that is not a Tracked Repo is accepted but
   const snapshot = await connectAndReadSnapshot(running.port);
   expect(snapshot.feed).toEqual([]);
 });
-
-/** Connect a display and read the snapshot it is sent on connect. */
-async function connectAndReadSnapshot(port: number) {
-  const { ws, messages } = await connectedDisplay(port);
-  await sleep(50);
-  ws.close();
-  return messages[0];
-}
 
 test("a display connecting receives a snapshot of the Feed reflecting earlier events", async () => {
   running = await start();
@@ -302,21 +229,84 @@ test("a display connecting receives a snapshot of the Feed reflecting earlier ev
   expect(snapshot).toEqual({
     type: "snapshot",
     teamScore: 70,
+    // #42 was merged, never seen open, so nothing is in flight.
+    openPrs: [],
+    // Snapshot entries carry the server timestamp they were recorded at, so a
+    // display can expire them itself rather than restamping them on receipt.
     feed: [
       {
         type: "pr-merged",
         repo: "example-org/projects-app",
         number: 42,
         title: "Add arcade scene renderer",
+        at: IN_THE_SOUND_WINDOW,
       },
       {
         type: "pr-comment",
         repo: "example-org/content",
         number: 13,
         title: "Load the sprite sheet",
+        at: IN_THE_SOUND_WINDOW,
       },
     ],
   });
+});
+
+test("an opened PR stays on the board as state until it is merged", async () => {
+  running = await start();
+
+  await postWebhook(running.port, { body: withPullRequest({ action: "opened" }) });
+  const inFlight = await connectAndReadSnapshot(running.port);
+  await postWebhook(running.port);
+  const afterMerge = await connectAndReadSnapshot(running.port);
+
+  expect(inFlight.openPrs).toEqual([
+    {
+      repo: "example-org/projects-app",
+      number: 42,
+      title: "Add arcade scene renderer",
+    },
+  ]);
+  expect(afterMerge.openPrs).toEqual([]);
+});
+
+test("a pr-opened delivery reaches a connected display's in-flight list without a reconnect", async () => {
+  running = await start();
+  const { ws, messages } = await connectedDisplay(running.port);
+
+  await postWebhook(running.port, { body: withPullRequest({ action: "opened" }) });
+  await sleep(50);
+  ws.close();
+
+  expect(messages.at(-1).openPrs).toEqual([
+    {
+      repo: "example-org/projects-app",
+      number: 42,
+      title: "Add arcade scene renderer",
+    },
+  ]);
+});
+
+const prComment = {
+  type: "pr-comment",
+  repo: "example-org/content",
+  number: 13,
+  title: "Load the sprite sheet",
+};
+
+test("a second comment on the same PR is its own Ambient Event rather than a swallowed repeat", async () => {
+  running = await start();
+
+  await postWebhook(running.port, { body: commentBody, event: "issue_comment" });
+  const { received } = await postAndWatch(running.port, {
+    body: commentBody,
+    event: "issue_comment",
+  });
+
+  expect(received).toEqual([prComment]);
+  const snapshot = await connectAndReadSnapshot(running.port);
+  const stamped = { ...prComment, at: IN_THE_SOUND_WINDOW };
+  expect(snapshot.feed).toEqual([stamped, stamped]);
 });
 
 test("a display that reconnects after a dropped socket receives a fresh snapshot", async () => {
@@ -337,12 +327,14 @@ test("a display that reconnects after a dropped socket receives a fresh snapshot
       repo: "example-org/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      at: IN_THE_SOUND_WINDOW,
     },
     {
       type: "pr-comment",
       repo: "example-org/content",
       number: 13,
       title: "Load the sprite sheet",
+      at: IN_THE_SOUND_WINDOW,
     },
   ]);
 });
@@ -387,7 +379,8 @@ test.for([
 
 test("advancing the clock 24 hours past an event expires it from later Feed snapshots", async () => {
   const HOUR = 60 * 60 * 1000;
-  let clock = Date.parse("2026-08-13T09:00:00Z");
+  const START = Date.parse("2026-08-13T09:00:00Z");
+  let clock = START;
   running = await start(() => clock);
 
   await postWebhook(running.port);
@@ -406,6 +399,7 @@ test("advancing the clock 24 hours past an event expires it from later Feed snap
       repo: "example-org/content",
       number: 13,
       title: "Load the sprite sheet",
+      at: START + 23 * HOUR,
     },
   ]);
 });
@@ -423,11 +417,9 @@ test.for([
   ["has no Tracked Repo list", "config-missing-tracked-repos.json"],
   ["has a Tracked Repo list that is not a list", "config-tracked-repos-not-a-list.json"],
 ])("the server refuses to start when the config %s", async ([, file]) => {
-  const badConfig = fileURLToPath(
-    new URL(`./fixtures/${file}`, import.meta.url),
-  );
-
-  await expect(startServer(0, { configPath: badConfig })).rejects.toThrow(
+  await expect(
+    startServer(0, { configPath: badConfigPath(file!) }),
+  ).rejects.toThrow(
     /trackedRepos/,
   );
 });
