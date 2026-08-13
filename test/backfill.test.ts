@@ -64,19 +64,28 @@ const onlyProjectsApp =
 test("a display connecting right after boot receives a snapshot of the backfilled open and merged PRs", async () => {
   const api = await stubGitHubApi(
     onlyProjectsApp(
-      [{ number: 1, title: "Open one", created_at: ago(2 * HOUR) }],
+      [
+        {
+          number: 1,
+          title: "Open one",
+          created_at: ago(2 * HOUR),
+          user: { login: "octocat" },
+        },
+      ],
       [
         {
           number: 2,
           title: "Merged one",
           updated_at: ago(HOUR),
           merged_at: ago(HOUR),
+          user: { login: "author-alice" },
         },
         {
           number: 3,
           title: "Abandoned one",
           updated_at: ago(3 * HOUR),
           merged_at: null,
+          user: { login: "author-alice" },
         },
       ],
     ),
@@ -92,6 +101,7 @@ test("a display connecting right after boot receives a snapshot of the backfille
       repo: "example-org/projects-app",
       number: 1,
       title: "Open one",
+      actor: "octocat",
       at: NOW - 2 * HOUR,
     },
     {
@@ -99,6 +109,8 @@ test("a display connecting right after boot receives a snapshot of the backfille
       repo: "example-org/projects-app",
       number: 2,
       title: "Merged one",
+      // The list API returns no merged_by, so Backfill credits the author.
+      actor: "author-alice",
       at: NOW - HOUR,
     },
   ]);
@@ -110,6 +122,7 @@ const mergedEvent = {
   repo: "example-org/projects-app",
   number: 42,
   title: "Add arcade scene renderer",
+  actor: "hubot",
 };
 
 test.for([
@@ -142,6 +155,7 @@ test("a webhook for a PR that Backfill already recorded does not duplicate the F
           title: "Add arcade scene renderer",
           updated_at: ago(HOUR),
           merged_at: ago(HOUR),
+          user: { login: "octocat" },
         },
       ],
     ),
@@ -150,9 +164,12 @@ test("a webhook for a PR that Backfill already recorded does not duplicate the F
 
   await postWebhook(running!.port);
 
-  // Backfill got there first, so the entry keeps the merge time GitHub reported.
+  // Backfill got there first, so the entry keeps the merge time GitHub reported —
+  // and its author stand-in for the actor, rather than the webhook's merger.
   const snapshot = await connectAndReadSnapshot(running!.port);
-  expect(snapshot.feed).toEqual([{ ...mergedEvent, at: NOW - HOUR }]);
+  expect(snapshot.feed).toEqual([
+    { ...mergedEvent, actor: "octocat", at: NOW - HOUR },
+  ]);
 });
 
 test("a redelivered webhook for a merge Backfill recorded more than 24 hours ago scores once", async () => {
@@ -187,19 +204,28 @@ test("a redelivered webhook for a merge Backfill recorded more than 24 hours ago
 test("Backfilled events older than 24 hours are kept out of the Feed snapshot", async () => {
   const api = await stubGitHubApi(
     onlyProjectsApp(
-      [{ number: 1, title: "Stale open one", created_at: ago(72 * HOUR) }],
+      [
+        {
+          number: 1,
+          title: "Stale open one",
+          created_at: ago(72 * HOUR),
+          user: { login: "stale-sam" },
+        },
+      ],
       [
         {
           number: 2,
           title: "Merged on Tuesday",
           updated_at: ago(72 * HOUR),
           merged_at: ago(72 * HOUR),
+          user: { login: "author-alice" },
         },
         {
           number: 3,
           title: "Merged an hour ago",
           updated_at: ago(HOUR),
           merged_at: ago(HOUR),
+          user: { login: "author-alice" },
         },
       ],
     ),
@@ -214,15 +240,18 @@ test("Backfilled events older than 24 hours are kept out of the Feed snapshot", 
       repo: "example-org/projects-app",
       number: 3,
       title: "Merged an hour ago",
+      actor: "author-alice",
       at: NOW - HOUR,
     },
   ]);
-  // The open PR is state, not a 24h event: it stays on the board however old it is.
+  // The open PR is state, not a 24h event: it stays on the board however old it is,
+  // carrying its author.
   expect(snapshot.openPrs).toEqual([
     {
       repo: "example-org/projects-app",
       number: 1,
       title: "Stale open one",
+      actor: "stale-sam",
     },
   ]);
 });
@@ -234,9 +263,21 @@ test("Backfill rebuilds this week's review approvals into the Team Score", async
     if (url.includes("/pulls/7/reviews"))
       return [
         // Last week's approval: already scored in a week that has ended.
-        { state: "APPROVED", submitted_at: ago(10 * DAY) },
-        { state: "APPROVED", submitted_at: ago(2 * HOUR) },
-        { state: "CHANGES_REQUESTED", submitted_at: ago(HOUR) },
+        {
+          state: "APPROVED",
+          submitted_at: ago(10 * DAY),
+          user: { login: "old-olive" },
+        },
+        {
+          state: "APPROVED",
+          submitted_at: ago(2 * HOUR),
+          user: { login: "reviewer-rita" },
+        },
+        {
+          state: "CHANGES_REQUESTED",
+          submitted_at: ago(HOUR),
+          user: { login: "reviewer-rita" },
+        },
       ];
     if (url.includes("state=open"))
       return [
@@ -245,6 +286,7 @@ test("Backfill rebuilds this week's review approvals into the Team Score", async
           title: "Wire up the Feed",
           created_at: ago(3 * HOUR),
           updated_at: ago(HOUR),
+          user: { login: "author-alice" },
         },
       ];
     return [];
@@ -260,6 +302,7 @@ test("Backfill rebuilds this week's review approvals into the Team Score", async
       repo: "example-org/projects-app",
       number: 7,
       title: "Wire up the Feed",
+      actor: "author-alice",
       at: NOW - 3 * HOUR,
     },
     {
@@ -267,6 +310,7 @@ test("Backfill rebuilds this week's review approvals into the Team Score", async
       repo: "example-org/projects-app",
       number: 7,
       title: "Wire up the Feed",
+      actor: "reviewer-rita",
       at: NOW - 2 * HOUR,
     },
   ]);

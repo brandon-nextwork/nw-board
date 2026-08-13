@@ -6,7 +6,8 @@
     "title": "Add arcade scene renderer",
     "merged": true,
     "html_url": "https://github.com/example-org/projects-app/pull/42",
-    "user": { "login": "octocat" }
+    "user": { "login": "octocat" },
+    "merged_by": { "login": "hubot" }
   },
   "repository": { "full_name": "example-org/projects-app" }
 }
