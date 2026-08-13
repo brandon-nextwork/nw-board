@@ -9,6 +9,9 @@ import { startServer } from "../src/server.ts";
 
 const SECRET = "test-webhook-secret";
 process.env.GITHUB_WEBHOOK_SECRET = SECRET;
+// Backfill belongs to backfill.test.ts; without a token these tests never reach the
+// GitHub API, whatever the shell running them has exported.
+delete process.env.GITHUB_TOKEN;
 
 const rawBody = readFileSync(
   new URL("./fixtures/pull-request-merged.json", import.meta.url),

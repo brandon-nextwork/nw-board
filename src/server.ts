@@ -60,7 +60,17 @@ type Options = {
   /** Path to the JSON config holding the Tracked Repo list. */
   configPath?: string;
   now?: () => number;
+  /** Root of the GitHub REST API; tests point this at a stub. */
+  githubApiBase?: string;
 };
+
+/** Monday 00:00 local time of the week containing `at` — the Team Score week. */
+function startOfWeek(at: number) {
+  const monday = new Date(at);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  return monday.getTime();
+}
 
 export async function startServer(port: number, options: Options = {}) {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -98,6 +108,92 @@ export async function startServer(port: number, options: Options = {}) {
     socket.send(JSON.stringify({ type: "snapshot", feed: currentFeed() })),
   );
 
+  // The single path into state: webhooks and Backfill both land here, so anything
+  // derived from events (Team Score) has one function to hook. Repeats of an event
+  // already in the Feed (same type/repo/number) are dropped, which is what stops a
+  // webhook from duplicating what Backfill already fetched.
+  const recordEvent = (event: DomainEvent, at: number) => {
+    const known = feed.some(
+      ({ event: seen }) =>
+        seen.type === event.type &&
+        seen.repo === event.repo &&
+        seen.number === event.number,
+    );
+    if (known) return;
+    feed.push({ at, event });
+    for (const client of wss.clients) client.send(JSON.stringify(event));
+  };
+
+  /**
+   * Backfill: rebuild the Feed from the GitHub API so a fresh boot is never blank and
+   * downtime leaves no gap. Fetches back to the start of the week (not just the Feed's
+   * 24h) because the Team Score is rebuilt from the week's Celebration Events.
+   * Any failure is logged and skipped — live webhooks still work without it.
+   */
+  async function backfill() {
+    const token = process.env.GITHUB_TOKEN;
+    if (!token) {
+      console.warn(
+        "GITHUB_TOKEN is not set: skipping Backfill, the board will fill from live webhooks only",
+      );
+      return;
+    }
+    const apiBase = options.githubApiBase ?? "https://api.github.com";
+    const weekStart = startOfWeek(now());
+    const entries: { at: number; event: DomainEvent }[] = [];
+
+    const pulls = async (repo: string, query: string) => {
+      const response = await fetch(`${apiBase}/repos/${repo}/pulls?${query}`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/vnd.github+json",
+        },
+      });
+      if (!response.ok)
+        throw new Error(`GitHub API ${response.status} for ${repo}?${query}`);
+      return (await response.json()) as any[];
+    };
+
+    for (const repo of trackedRepos) {
+      for (const pr of await pulls(repo, "state=open&per_page=100")) {
+        entries.push({
+          at: Date.parse(pr.created_at),
+          event: { type: "pr-opened", repo, number: pr.number, title: pr.title },
+        });
+      }
+      // Closed PRs come back newest-updated first, so we can stop the moment a page
+      // runs past the start of the week.
+      for (let page = 1, done = false; !done; page++) {
+        const closed = await pulls(
+          repo,
+          `state=closed&sort=updated&direction=desc&per_page=100&page=${page}`,
+        );
+        done = closed.length < 100;
+        for (const pr of closed) {
+          if (Date.parse(pr.updated_at) < weekStart) {
+            done = true;
+            break;
+          }
+          const mergedAt = pr.merged_at ? Date.parse(pr.merged_at) : 0;
+          if (mergedAt >= weekStart)
+            entries.push({
+              at: mergedAt,
+              event: {
+                type: "pr-merged",
+                repo,
+                number: pr.number,
+                title: pr.title,
+              },
+            });
+        }
+      }
+    }
+
+    // Oldest first, matching the Feed's order (its 24h expiry shifts off the front).
+    for (const { at, event } of entries.sort((a, b) => a.at - b.at))
+      recordEvent(event, at);
+  }
+
   app.post("/webhook", express.raw({ type: "*/*", limit: "5mb" }), (req, res) => {
     if (!Buffer.isBuffer(req.body)) {
       res.sendStatus(401);
@@ -117,10 +213,7 @@ export async function startServer(port: number, options: Options = {}) {
 
     const payload = JSON.parse(req.body.toString("utf8"));
     const event = toDomainEvent(req.header("x-github-event"), payload);
-    if (event && trackedRepos.includes(event.repo)) {
-      feed.push({ at: now(), event });
-      for (const client of wss.clients) client.send(JSON.stringify(event));
-    }
+    if (event && trackedRepos.includes(event.repo)) recordEvent(event, now());
     res.sendStatus(204);
   });
 
@@ -128,6 +221,10 @@ export async function startServer(port: number, options: Options = {}) {
   app.use(((err, _req, res, _next) => {
     res.sendStatus(err.status ?? 400);
   }) satisfies ErrorRequestHandler);
+
+  await backfill().catch((error) =>
+    console.warn(`Backfill failed, serving live events only: ${error}`),
+  );
 
   await new Promise<void>((resolve) => http.listen(port, resolve));
   return {
