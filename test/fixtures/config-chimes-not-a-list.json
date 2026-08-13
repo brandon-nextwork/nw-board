@@ -1,0 +1,5 @@
+{
+  "trackedRepos": ["nextworkengineering/projects-app"],
+  "quietHours": { "soundStart": "09:00", "soundEnd": "18:00" },
+  "chimes": "09:00"
+}

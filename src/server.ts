@@ -56,10 +56,22 @@ function toDomainEvent(
   return undefined;
 }
 
+/** Celebration Events are the loud ones; everything else is an Ambient Event. */
+const CELEBRATIONS = new Set(["pr-merged", "review-approved"]);
+
+/** "09:00" -> 540 minutes past local midnight. Anything else is a config error. */
+function minutesOfDay(value: unknown, complaint: string) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value));
+  if (!match) throw new Error(complaint);
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
 type Options = {
   /** Path to the JSON config holding the Tracked Repo list. */
   configPath?: string;
   now?: () => number;
+  /** How often the Day Chime scheduler checks the clock. */
+  tickMs?: number;
 };
 
 export async function startServer(port: number, options: Options = {}) {
@@ -68,14 +80,29 @@ export async function startServer(port: number, options: Options = {}) {
 
   const configPath =
     options.configPath ?? fileURLToPath(new URL("../config.json", import.meta.url));
-  const trackedRepos: string[] = JSON.parse(
-    readFileSync(configPath, "utf8"),
-  ).trackedRepos;
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const trackedRepos: string[] = config.trackedRepos;
   // A missing list would 400 every delivery; a bare string would match repos by substring.
   if (!Array.isArray(trackedRepos))
     throw new Error(`${configPath}: trackedRepos must be a list of "owner/name"`);
 
+  // Quiet Hours: sound is allowed on weekdays between these two local times only.
+  const quietHours = `${configPath}: quietHours must be {"soundStart":"HH:MM","soundEnd":"HH:MM"}`;
+  const soundStart = minutesOfDay(config.quietHours?.soundStart, quietHours);
+  const soundEnd = minutesOfDay(config.quietHours?.soundEnd, quietHours);
+  // Day Chimes: local times, weekdays only.
+  const badChimes = `${configPath}: chimes must be a list of "HH:MM"`;
+  if (!Array.isArray(config.chimes)) throw new Error(badChimes);
+  const chimes: string[] = config.chimes;
+  for (const chime of chimes) minutesOfDay(chime, badChimes);
+
   const now = options.now ?? Date.now;
+  const isWeekday = (at: Date) => at.getDay() >= 1 && at.getDay() <= 5;
+  const soundAllowed = () => {
+    const at = new Date(now());
+    const minute = at.getHours() * 60 + at.getMinutes();
+    return isWeekday(at) && minute >= soundStart && minute < soundEnd;
+  };
 
   // The Feed: every tracked domain event from the last 24 hours, oldest first.
   const feed: { at: number; event: DomainEvent }[] = [];
@@ -93,7 +120,14 @@ export async function startServer(port: number, options: Options = {}) {
   // Display protocol (server -> client only):
   //   on connect: {"type":"snapshot","feed":[<domain event>, ...]}  (oldest first)
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title}
-  // No domain event type is called "snapshot", so `type` alone tells them apart.
+  //               Celebration Events carry "audible": true|false — Quiet Hours decided
+  //               at delivery time. Ambient Events never make sound, so carry no flag.
+  //   chime:      {"type":"day-chime","at":"09:00"}  (weekdays, on the configured times)
+  // No domain event type is called "snapshot" or "day-chime", so `type` tells them apart.
+  const broadcast = (message: unknown) => {
+    for (const client of wss.clients) client.send(JSON.stringify(message));
+  };
+
   wss.on("connection", (socket) =>
     socket.send(JSON.stringify({ type: "snapshot", feed: currentFeed() })),
   );
@@ -119,7 +153,11 @@ export async function startServer(port: number, options: Options = {}) {
     const event = toDomainEvent(req.header("x-github-event"), payload);
     if (event && trackedRepos.includes(event.repo)) {
       feed.push({ at: now(), event });
-      for (const client of wss.clients) client.send(JSON.stringify(event));
+      broadcast(
+        CELEBRATIONS.has(event.type)
+          ? { ...event, audible: soundAllowed() }
+          : event,
+      );
     }
     res.sendStatus(204);
   });
@@ -129,11 +167,25 @@ export async function startServer(port: number, options: Options = {}) {
     res.sendStatus(err.status ?? 400);
   }) satisfies ErrorRequestHandler);
 
+  // Day Chime scheduler: poll the clock rather than compute a delay, so the injected
+  // clock (and a Pi whose time jumps after an NTP sync) is followed rather than trusted.
+  // `fired` keeps a chime to one per minute however many ticks land inside it.
+  let fired = "";
+  const scheduler = setInterval(() => {
+    const at = new Date(now());
+    const hhmm = `${at.getHours()}`.padStart(2, "0") + ":" + `${at.getMinutes()}`.padStart(2, "0");
+    const minute = `${at.toDateString()} ${hhmm}`;
+    if (fired === minute || !isWeekday(at) || !chimes.includes(hhmm)) return;
+    fired = minute;
+    broadcast({ type: "day-chime", at: hhmm });
+  }, options.tickMs ?? 30_000);
+
   await new Promise<void>((resolve) => http.listen(port, resolve));
   return {
     port: (http.address() as AddressInfo).port,
     close: () =>
       new Promise<void>((resolve) => {
+        clearInterval(scheduler);
         for (const client of wss.clients) client.terminate();
         http.close(() => resolve());
       }),
