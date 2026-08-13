@@ -106,13 +106,16 @@ const SPRITES = {
     "..oooo..",
     ".oooooo.",
   ],
+  // Keep the ink one pixel clear of the 8x8 edge: a stroke that reaches the grid
+  // boundary ends in a flat wall instead of a tip, and at the approval takeover's
+  // 12-24x slam scale that wall reads as the sprite being cropped.
   check: [
     "........",
-    "......gg",
     ".....gg.",
-    "g...gg..",
-    "gg.gg...",
+    "....gg..",
+    ".g.gg...",
     ".ggg....",
+    "..gg....",
     "..g.....",
     "........",
   ],
@@ -345,11 +348,15 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   icon.position.set(24, 22);
   const kind = label("", 24, C.ink);
   kind.position.set(56, 8);
+  // Actor gets its own column so the logins line up down the panel; the body
+  // gives up the width it takes.
+  const who = label("", 24, C.ink);
+  who.position.set(196, 8);
   const body = label("", 24, C.dim);
-  body.position.set(230, 8);
-  row.addChild(icon, kind, body);
+  body.position.set(470, 8);
+  row.addChild(icon, kind, who, body);
   feedPanel.addChild(row);
-  return { row, icon, kind, body };
+  return { row, icon, kind, who, body };
 });
 
 // --------------------------------------------------------------------------------
@@ -406,18 +413,19 @@ function renderFeed() {
   feedEmpty.visible = feed.length === 0;
   for (let i = 0; i < FEED_ROWS; i++) {
     const entry = feed[feed.length - 1 - i];
-    const { row, icon, kind, body } = feedRows[i];
+    const { row, icon, kind, who, body } = feedRows[i];
     row.visible = Boolean(entry);
     if (!entry) continue;
     const style = EVENTS[entry.type] ?? { name: entry.type, color: C.dim, icon: "star" };
     icon.texture = pixelTexture(style.icon);
     kind.text = style.name;
     kind.style.fill = style.color;
-    // Clipped to the ~54 characters that fit the panel at this font size rather than
+    // Clipped to the characters that fit each column at this font size rather than
     // wrapped; a Feed row is a glance, not a read.
+    who.text = clip(entry.actor ?? "", 16);
     body.text = clip(
       `${clock(entry.at)}  ${entry.repo.split("/").pop()} #${entry.number}  ${entry.title}`,
-      54,
+      39,
     );
     // Older entries fade toward the bottom of the panel, so the eye lands on the top.
     row.alpha = 1 - i * 0.045;
@@ -434,7 +442,11 @@ function renderFlight(openPrs) {
     const { card, head, body } = flightCards[i];
     card.visible = Boolean(pr);
     if (!pr) continue;
-    head.text = `${pr.repo.split("/").pop()} #${pr.number}`;
+    // The author, not whoever last touched it: an open PR belongs to whoever raised it.
+    head.text = clip(
+      `${pr.repo.split("/").pop()} #${pr.number}  ${pr.actor ?? ""}`.trimEnd(),
+      36,
+    );
     body.text = clip(pr.title, 38);
   }
   const hidden = openPrs.length - FLIGHT_CARDS;
@@ -612,8 +624,11 @@ function playNextCelebration() {
   });
 }
 
-/** Shared takeover backdrop: dim the board, name the PR, headline in the middle. */
-function takeoverScene(headline, color, event) {
+/**
+ * Shared takeover backdrop: dim the board, name the PR, headline in the middle,
+ * and credit whoever earned it (`verb` reads "merged by" / "approved by").
+ */
+function takeoverScene(headline, color, event, verb) {
   const scene = new Container();
   const dim = new Sprite(dotTexture());
   dim.width = W;
@@ -639,12 +654,23 @@ function takeoverScene(headline, color, event) {
   caption.anchor.set(0.5);
   caption.position.set(W / 2, H / 2 + 60);
   scene.addChild(caption);
-  return { scene, dim, banner, caption };
+
+  // No login means GitHub named nobody; a bare "merged by" credits no one, so skip it.
+  const credit = label(event.actor ? `${verb} ${clip(event.actor, 39)}` : "", 40, color);
+  credit.anchor.set(0.5);
+  credit.position.set(W / 2, H / 2 + 130);
+  scene.addChild(credit);
+  return { scene, dim, banner, caption, credit };
 }
 
 /** pr-merged: the big one — flash, confetti rain, fireworks, bouncing headline. */
 function mergedTakeover(event, done) {
-  const { scene, dim, banner, caption } = takeoverScene("PR MERGED!", C.amber, event);
+  const { scene, dim, banner, caption, credit } = takeoverScene(
+    "PR MERGED!",
+    C.amber,
+    event,
+    "merged by",
+  );
 
   const trophy = pixelSprite("trophy", 14);
   trophy.position.set(W / 2, H / 2 - 240);
@@ -687,6 +713,7 @@ function mergedTakeover(event, done) {
       banner.scale.set(Math.min(elapsed / 220, 1) * (1 + Math.sin(elapsed / 160) * 0.06));
       banner.y = H / 2 - 60 + Math.sin(elapsed / 200) * 18;
       caption.alpha = Math.min(elapsed / 400, 1);
+      credit.alpha = Math.min(elapsed / 400, 1);
       trophy.rotation = Math.sin(elapsed / 260) * 0.25;
       trophy.y = H / 2 - 240 + Math.sin(elapsed / 180) * 14;
       stepParticles(confetti, delta, 0.12);
@@ -699,7 +726,12 @@ function mergedTakeover(event, done) {
 
 /** review-approved: a stamp slamming down inside an expanding shockwave ring. */
 function approvedTakeover(event, done) {
-  const { scene, dim, banner, caption } = takeoverScene("APPROVED!", C.green, event);
+  const { scene, dim, banner, caption, credit } = takeoverScene(
+    "APPROVED!",
+    C.green,
+    event,
+    "approved by",
+  );
   banner.y = H / 2 - 40;
 
   const ring = new Sprite(ringTexture());
@@ -738,6 +770,7 @@ function approvedTakeover(event, done) {
       stamp.alpha = drop;
       banner.scale.set(drop < 1 ? drop * 0.9 : 1 + Math.sin(elapsed / 150) * 0.04);
       caption.alpha = Math.min(elapsed / 400, 1);
+      credit.alpha = Math.min(elapsed / 400, 1);
       ring.scale.set(1 + progress * 34);
       ring.alpha = Math.max(0, 0.9 - progress * 1.2);
       stepParticles(sparks, delta, 0.06);
@@ -851,7 +884,11 @@ const ambient = (type) => AMBIENT[type]?.();
 function chime(at = "") {
   play("day-chime");
   const scene = new Container();
-  const text = at === "17:00" ? `${at}  GAME OVER — GO HOME` : `${at}  PLAYER 1 START`;
+  // The board talks to the whole team, not to a single player at a cabinet.
+  const text =
+    at === "17:00"
+      ? `${at}  GAME OVER — GREAT RUN TEAM`
+      : `${at}  GOOD MORNING TEAM — PRESS START`;
   const banner = label(text, 54, C.magenta, {
     dropShadow: { color: 0x000000, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 1 },
   });
@@ -908,9 +945,12 @@ app.ticker.add((ticker) => {
 
 // --------------------------------------------------------------------------------
 // Display protocol (server -> client only):
-//   {type:"snapshot", feed:[{<domain event>, at}], teamScore, openPrs:[{repo,number,title}]}
+//   {type:"snapshot", feed:[{<domain event>, at}], teamScore,
+//    openPrs:[{repo,number,title,actor}]}  (openPrs.actor is the PR's author)
 //   on connect and whenever the score or the in-flight list moves, then bare domain
-//   events; Celebration Events carry audible:true|false (Quiet Hours), and
+//   events {type, repo, number, title, actor}; actor is the GitHub login of whoever
+//   did it (merger, reviewer, commenter), always a string and "" when GitHub named
+//   nobody. Celebration Events carry audible:true|false (Quiet Hours), and
 //   {type:"day-chime", at:"HH:MM"} marks the start and end of the workday.
 // --------------------------------------------------------------------------------
 
@@ -960,7 +1000,13 @@ renderFlight([]);
 //   arcade.celebrate("review-approved") / arcade.ambient("pr-comment") / arcade.chime("09:00")
 //   arcade.play("pr-merged")           — sound only
 //   arcade.setScore(1234)              — marquee tick-up
-const sample = (type) => ({ type, repo: "nextworkengineering/demo", number: 42, title: "Demo pull request" });
+const sample = (type) => ({
+  type,
+  repo: "nextworkengineering/demo",
+  number: 42,
+  title: "Demo pull request",
+  actor: "brandon-nextwork",
+});
 window.arcade = {
   app, // arcade.app.ticker.stop() / .update(t) steps an animation frame by frame
   celebrate: (type = "pr-merged", audible = true) => celebrate(type, sample(type), audible),

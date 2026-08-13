@@ -6,7 +6,8 @@
     "title": "Add arcade scene renderer",
     "merged": true,
     "html_url": "https://github.com/nextworkengineering/projects-app/pull/42",
-    "user": { "login": "octocat" }
+    "user": { "login": "octocat" },
+    "merged_by": { "login": "hubot" }
   },
   "repository": { "full_name": "nextworkengineering/projects-app" }
 }

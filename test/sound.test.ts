@@ -50,6 +50,7 @@ test.for([
         repo: "nextworkengineering/projects-app",
         number: 42,
         title: "Add arcade scene renderer",
+        actor: "hubot",
         audible,
       },
     ]);
@@ -70,6 +71,7 @@ test("an Ambient Event carries no audible flag even inside the sound window", as
       repo: "nextworkengineering/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      actor: "octocat",
     },
   ]);
 });

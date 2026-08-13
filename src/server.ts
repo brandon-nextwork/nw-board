@@ -11,7 +11,12 @@ type DomainEvent = {
   repo: string;
   number: number;
   title: string;
+  /** Who did it. Never undefined on the wire: an unnamed GitHub user is "". */
+  actor: string;
 };
+
+/** The login of whoever GitHub named, or "" when it named nobody. */
+const login = (who: any) => who?.login ?? "";
 
 /** Translate a GitHub delivery into the domain vocabulary. Anything else is ignored. */
 function toDomainEvent(
@@ -27,21 +32,25 @@ function toDomainEvent(
 
   if (githubEvent === "pull_request") {
     if (payload.action === "opened")
-      return { type: "pr-opened", repo, number, title };
+      return { type: "pr-opened", repo, number, title, actor: login(pr.user) };
     if (payload.action === "closed")
       return {
         type: pr.merged ? "pr-merged" : "pr-closed",
         repo,
         number,
         title,
+        // A merge belongs to whoever pressed the button; the author stands in when
+        // GitHub names no merger.
+        actor: (pr.merged && login(pr.merged_by)) || login(pr.user),
       };
   }
 
   if (githubEvent === "pull_request_review" && payload.action === "submitted") {
+    const actor = login(payload.review?.user);
     if (payload.review?.state === "approved")
-      return { type: "review-approved", repo, number, title };
+      return { type: "review-approved", repo, number, title, actor };
     if (payload.review?.state === "changes_requested")
-      return { type: "changes-requested", repo, number, title };
+      return { type: "changes-requested", repo, number, title, actor };
   }
 
   // Only comments on pull requests count; plain issue comments have no `pull_request`.
@@ -50,7 +59,14 @@ function toDomainEvent(
     payload.action === "created" &&
     pr.pull_request
   ) {
-    return { type: "pr-comment", repo, number, title };
+    // The PR comes from `issue`, but the actor is the commenter.
+    return {
+      type: "pr-comment",
+      repo,
+      number,
+      title,
+      actor: login(payload.comment?.user),
+    };
   }
 
   return undefined;
@@ -137,7 +153,12 @@ export async function startServer(port: number, options: Options = {}) {
   // The currently open PRs: board state rather than a 24h event, so an open PR sits
   // on the board however long ago it was opened. Backfill fills it; a pr-opened adds,
   // a pr-merged or pr-closed removes.
-  const openPrs: { repo: string; number: number; title: string }[] = [];
+  const openPrs: {
+    repo: string;
+    number: number;
+    title: string;
+    actor: string;
+  }[] = [];
 
   // The Team Score: this week's Celebration Event points. Derived on read, so the
   // weekly reset needs no timer — crossing Monday 00:00 simply zeroes it.
@@ -179,11 +200,12 @@ export async function startServer(port: number, options: Options = {}) {
       seen.add(key);
     }
     feed.push({ at, event });
-    const { type, repo, number, title } = event;
+    const { type, repo, number, title, actor } = event;
     const open = openPrs.findIndex(
       (pr) => pr.repo === repo && pr.number === number,
     );
-    if (type === "pr-opened" && open < 0) openPrs.push({ repo, number, title });
+    if (type === "pr-opened" && open < 0)
+      openPrs.push({ repo, number, title, actor });
     if ((type === "pr-merged" || type === "pr-closed") && open >= 0)
       openPrs.splice(open, 1);
     const earned = startOfWeek(at) === scoreWeek ? (points[event.type] ?? 0) : 0;
@@ -198,11 +220,15 @@ export async function startServer(port: number, options: Options = {}) {
 
   // Display protocol (server -> client only):
   //   on connect: {"type":"snapshot","feed":[{<domain event>, "at":<ms>}, ...],
-  //                "teamScore":<number>,"openPrs":[{repo, number, title}, ...]}
+  //                "teamScore":<number>,"openPrs":[{repo, number, title, actor}, ...]}
   //               feed is oldest first and holds the last 24h, each entry stamped with
   //               the server time it happened; openPrs is the current set of open PRs
-  //               (state, so no 24h expiry) — what's in flight now.
-  //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title}
+  //               (state, so no 24h expiry) — what's in flight now, each with the
+  //               GitHub login of its author.
+  //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title, actor}
+  //               actor is the GitHub login of whoever did it (the merger for a
+  //               pr-merged, the reviewer for a review, the commenter for a comment),
+  //               always a string — "" when GitHub named nobody.
   //               Celebration Events carry "audible": true|false — Quiet Hours decided
   //               at delivery time. Ambient Events never make sound, so carry no flag.
   //   chime:      {"type":"day-chime","at":"09:00"}  (weekdays, on the configured times)
@@ -255,7 +281,13 @@ export async function startServer(port: number, options: Options = {}) {
       for (const pr of await get(`${repo}/pulls?state=open&per_page=100`)) {
         entries.push({
           at: Date.parse(pr.created_at),
-          event: { type: "pr-opened", repo, number: pr.number, title: pr.title },
+          event: {
+            type: "pr-opened",
+            repo,
+            number: pr.number,
+            title: pr.title,
+            actor: login(pr.user),
+          },
         });
         if (Date.parse(pr.updated_at) >= weekStart) active.push(pr);
       }
@@ -277,6 +309,9 @@ export async function startServer(port: number, options: Options = {}) {
               repo,
               number: pr.number,
               title: pr.title,
+              // The list API returns no merged_by, so the author is an honest lazy
+              // stand-in for the merger.
+              actor: login(pr.user),
             },
           });
       }
@@ -301,6 +336,7 @@ export async function startServer(port: number, options: Options = {}) {
               repo,
               number: pr.number,
               title: pr.title,
+              actor: login(review.user),
             },
           });
         }

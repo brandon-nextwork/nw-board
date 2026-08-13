@@ -12,4 +12,5 @@ Glossary for the PR arcade display (Raspberry Pi + TV, GitHub activity).
 - **Feed** — the ambient stream of the last 24 hours of tracked events.
 - **Team Score** — a single shared point total earned from Celebration Events. No per-person scores. Resets weekly.
 - **Day Chime** — a scheduled sound marking the start (09:00) and end (17:00) of the workday, weekdays only. Not tied to any event.
+- **Actor** — the GitHub login shown on the board for an event: who merged, who reviewed, who commented, who opened. Logins, not display names — a display name would cost a per-user API call, which is out of scope.
 - **In Flight** — the currently open PRs across the Tracked Repos. Board state, not events: an open PR stays visible however long ago it was opened, and leaves when merged or closed.

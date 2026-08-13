@@ -38,6 +38,8 @@ test("a signed merged-PR webhook from a Tracked Repo pushes a pr-merged Celebrat
       type: "pr-merged",
       repo: "nextworkengineering/projects-app",
       number: 42,
+      // A merge is credited to whoever pressed the button, not the author (octocat).
+      actor: "hubot",
       title: "Add arcade scene renderer",
       audible: true,
     },
@@ -79,14 +81,48 @@ test("a merged-PR webhook with a very long PR description still pushes the Celeb
       repo: "nextworkengineering/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      actor: "hubot",
       audible: true,
     },
   ]);
 });
 
+test("a merged-PR webhook naming no merger credits the PR author instead", async () => {
+  running = await start();
+  const body = JSON.stringify({
+    ...merged,
+    pull_request: { ...merged.pull_request, merged_by: null },
+  });
+
+  const { received } = await postAndWatch(running.port, { body });
+
+  expect(received[0].actor).toBe("octocat");
+});
+
 const reviewBody = fixture("pull-request-review.json");
 const review = JSON.parse(reviewBody);
 const commentBody = fixture("issue-comment.json");
+
+test("a review whose submitter carries no login records an empty actor rather than undefined", async () => {
+  running = await start();
+  const body = JSON.stringify({ ...review, review: { state: "approved" } });
+
+  const { received } = await postAndWatch(running.port, {
+    body,
+    event: "pull_request_review",
+  });
+
+  expect(received).toEqual([
+    {
+      type: "review-approved",
+      repo: "nextworkengineering/features",
+      number: 7,
+      title: "Wire up the Feed",
+      actor: "",
+      audible: true,
+    },
+  ]);
+});
 
 const withPullRequest = (patch: Record<string, unknown>) =>
   JSON.stringify({
@@ -104,6 +140,7 @@ test.for([
       repo: "nextworkengineering/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      actor: "octocat",
     },
   ],
   [
@@ -114,6 +151,7 @@ test.for([
       repo: "nextworkengineering/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      actor: "octocat",
     },
   ],
   [
@@ -124,6 +162,8 @@ test.for([
       repo: "nextworkengineering/features",
       number: 7,
       title: "Wire up the Feed",
+      // The reviewer, not the PR's author-alice.
+      actor: "reviewer-rita",
       audible: true,
     },
   ],
@@ -132,7 +172,7 @@ test.for([
     {
       body: JSON.stringify({
         ...review,
-        review: { state: "changes_requested" },
+        review: { ...review.review, state: "changes_requested" },
       }),
       event: "pull_request_review",
     },
@@ -141,6 +181,7 @@ test.for([
       repo: "nextworkengineering/features",
       number: 7,
       title: "Wire up the Feed",
+      actor: "reviewer-rita",
     },
   ],
   [
@@ -151,6 +192,8 @@ test.for([
       repo: "nextworkengineering/content",
       number: 13,
       title: "Load the sprite sheet",
+      // The commenter, not the PR's author-alice.
+      actor: "commenter-carl",
     },
   ],
 ])("a signed webhook from a Tracked Repo pushes %s to the display", async ([
@@ -239,6 +282,7 @@ test("a display connecting receives a snapshot of the Feed reflecting earlier ev
         repo: "nextworkengineering/projects-app",
         number: 42,
         title: "Add arcade scene renderer",
+        actor: "hubot",
         at: IN_THE_SOUND_WINDOW,
       },
       {
@@ -246,6 +290,7 @@ test("a display connecting receives a snapshot of the Feed reflecting earlier ev
         repo: "nextworkengineering/content",
         number: 13,
         title: "Load the sprite sheet",
+        actor: "commenter-carl",
         at: IN_THE_SOUND_WINDOW,
       },
     ],
@@ -260,11 +305,13 @@ test("an opened PR stays on the board as state until it is merged", async () => 
   await postWebhook(running.port);
   const afterMerge = await connectAndReadSnapshot(running.port);
 
+  // An in-flight PR carries its author, so the board can show whose it is.
   expect(inFlight.openPrs).toEqual([
     {
       repo: "nextworkengineering/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      actor: "octocat",
     },
   ]);
   expect(afterMerge.openPrs).toEqual([]);
@@ -283,6 +330,7 @@ test("a pr-opened delivery reaches a connected display's in-flight list without 
       repo: "nextworkengineering/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      actor: "octocat",
     },
   ]);
 });
@@ -292,6 +340,7 @@ const prComment = {
   repo: "nextworkengineering/content",
   number: 13,
   title: "Load the sprite sheet",
+  actor: "commenter-carl",
 };
 
 test("a second comment on the same PR is its own Ambient Event rather than a swallowed repeat", async () => {
@@ -327,6 +376,7 @@ test("a display that reconnects after a dropped socket receives a fresh snapshot
       repo: "nextworkengineering/projects-app",
       number: 42,
       title: "Add arcade scene renderer",
+      actor: "hubot",
       at: IN_THE_SOUND_WINDOW,
     },
     {
@@ -334,6 +384,7 @@ test("a display that reconnects after a dropped socket receives a fresh snapshot
       repo: "nextworkengineering/content",
       number: 13,
       title: "Load the sprite sheet",
+      actor: "commenter-carl",
       at: IN_THE_SOUND_WINDOW,
     },
   ]);
@@ -399,6 +450,7 @@ test("advancing the clock 24 hours past an event expires it from later Feed snap
       repo: "nextworkengineering/content",
       number: 13,
       title: "Load the sprite sheet",
+      actor: "commenter-carl",
       at: START + 23 * HOUR,
     },
   ]);

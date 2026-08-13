@@ -1,6 +1,10 @@
 {
   "action": "submitted",
-  "review": { "state": "approved" },
-  "pull_request": { "number": 7, "title": "Wire up the Feed" },
+  "review": { "state": "approved", "user": { "login": "reviewer-rita" } },
+  "pull_request": {
+    "number": 7,
+    "title": "Wire up the Feed",
+    "user": { "login": "author-alice" }
+  },
   "repository": { "full_name": "nextworkengineering/features" }
 }
