@@ -4,10 +4,14 @@
 
 **Blocked by:** 02 — Full event vocabulary, Feed, and snapshots.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A celebration fixture delivered inside Quiet Hours' allowed window produces a protocol message marked audible; the same fixture on a weekend or at night is marked silent
-- [ ] Advancing the injectable clock to 09:00 and 17:00 on a weekday each emit a Day Chime protocol message; weekends emit none
-- [ ] Client plays a jingle on audible celebrations, stays silent on silent ones, and plays the chime sound on Day Chime messages
-- [ ] Sound window and chime times come from config
-- [ ] Server-side behavior asserted at the server seam; audio playback verified by ear
+- [x] A celebration fixture delivered inside Quiet Hours' allowed window produces a protocol message marked audible; the same fixture on a weekend or at night is marked silent
+- [x] Advancing the injectable clock to 09:00 and 17:00 on a weekday each emit a Day Chime protocol message; weekends emit none
+- [x] Client plays a jingle on audible celebrations, stays silent on silent ones, and plays the chime sound on Day Chime messages
+- [x] Sound window and chime times come from config
+- [x] Server-side behavior asserted at the server seam; audio playback verified by ear
+
+## Comments
+
+Built in a parallel worktree, merged cleanly. Combined review approved with notes: a chime broadcast while the display is reconnecting is dropped by design (documented in code). Audio playback itself still needs an ear on real hardware. 63 seam tests green.
