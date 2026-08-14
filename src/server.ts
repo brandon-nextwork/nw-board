@@ -275,7 +275,7 @@ export async function startServer(port: number, options: Options = {}) {
       return (await response.json()) as any[];
     };
 
-    for (const repo of trackedRepos) {
+    const backfillRepo = async (repo: string) => {
       // PRs touched this week, whose reviews may hold this week's approvals.
       const active: any[] = [];
       for (const pr of await get(`${repo}/pulls?state=open&per_page=100`)) {
@@ -341,7 +341,14 @@ export async function startServer(port: number, options: Options = {}) {
           });
         }
       }
-    }
+    };
+
+    // One repo the token can't read (or that errors) loses its own history, not
+    // the whole board's — the other Tracked Repos' entries still land.
+    for (const repo of trackedRepos)
+      await backfillRepo(repo).catch((error) =>
+        console.warn(`Backfill failed for ${repo}, its history is live-only: ${error}`),
+      );
 
     // Oldest first, matching the Feed's order (its 24h expiry shifts off the front).
     for (const { at, event } of entries.sort((a, b) => a.at - b.at))
