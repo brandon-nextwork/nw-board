@@ -60,6 +60,9 @@ fi
 
 # --autoplay-policy is load-bearing: without it Chromium mutes the jingles
 # because a display-only page never gets a user gesture.
+# --password-store=basic keeps Chromium away from GNOME Keyring: under autologin
+# no password was typed, the keyring can't auto-unlock, and it pops a dialog on
+# every boot. The kiosk stores no credentials, so the keyring buys nothing.
 # The GPU flags are load-bearing on a Pi: under XWayland Chromium often falls
 # back to software WebGL (SwiftShader/llvmpipe) and the whole board runs in
 # slow motion. ozone-platform-hint=auto picks native Wayland when the session
@@ -72,6 +75,7 @@ exec "$CHROMIUM" \
   --disable-features=Translate \
   --check-for-update-interval=31536000 \
   --autoplay-policy=no-user-gesture-required \
+  --password-store=basic \
   --ozone-platform-hint=auto \
   --ignore-gpu-blocklist \
   --enable-gpu-rasterization \
