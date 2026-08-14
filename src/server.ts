@@ -204,8 +204,10 @@ export async function startServer(port: number, options: Options = {}) {
     const open = openPrs.findIndex(
       (pr) => pr.repo === repo && pr.number === number,
     );
+    // Newest first: the display shows the head of this list, and a freshly
+    // opened PR should be visible there, not buried behind "+N MORE".
     if (type === "pr-opened" && open < 0)
-      openPrs.push({ repo, number, title, actor });
+      openPrs.unshift({ repo, number, title, actor });
     if ((type === "pr-merged" || type === "pr-closed") && open >= 0)
       openPrs.splice(open, 1);
     const earned = startOfWeek(at) === scoreWeek ? (points[event.type] ?? 0) : 0;
