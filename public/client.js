@@ -555,7 +555,13 @@ function renderFeed() {
 setInterval(renderFeed, 60_000);
 
 let tickerLoop = 1;
+let tickerKey = "";
 function renderFlight(openPrs) {
+  // Snapshots arrive after every recorded event; re-rasterising the whole strip
+  // each time is a visible hitch on the Pi. Only rebuild when the content changed.
+  const key = JSON.stringify(openPrs);
+  if (key === tickerKey) return;
+  tickerKey = key;
   for (const old of tickerContent.removeChildren()) old.destroy({ children: true });
   const first = tickerSequence(openPrs);
   tickerLoop = first.width;
@@ -569,12 +575,16 @@ function renderFlight(openPrs) {
     seq.position.x = i * tickerLoop;
     tickerContent.addChild(seq);
   }
-  if (tickerContent.position.x <= -tickerLoop) tickerContent.position.x = 0;
+  if (tickerX <= -tickerLoop) tickerX = 0;
 }
 
+// The float accumulator scrolls; the container lands on whole pixels — fractional
+// positions under pixelated rendering read as shimmer, not motion.
+let tickerX = 0;
 app.ticker.add((t) => {
-  tickerContent.x -= TICKER_SPEED * t.deltaMS;
-  if (tickerContent.x <= -tickerLoop) tickerContent.x += tickerLoop;
+  tickerX -= TICKER_SPEED * t.deltaMS;
+  if (tickerX <= -tickerLoop) tickerX += tickerLoop;
+  tickerContent.x = Math.round(tickerX);
 });
 
 // Today's MVP on the marquee. A lead change is an event in its own right, so the name
