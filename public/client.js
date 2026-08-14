@@ -363,12 +363,12 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   const who = label("", 24, C.ink);
   who.position.set(196, 8);
   const time = label("", 24, C.dim);
-  time.position.set(356, 8);
+  time.position.set(420, 8);
   // Repo pill: a small rounded chip redrawn per render (width follows the text).
   const pillBg = new Graphics();
   const pillText = label("", 17, C.dim, { letterSpacing: 1 });
   const pill = new Container();
-  pill.position.set(452, 6);
+  pill.position.set(528, 6);
   pill.addChild(pillBg, pillText);
   const title = label("", 24, C.dim);
   title.position.set(0, 8); // x set per render, after the pill
@@ -467,7 +467,7 @@ function renderFeed() {
     kind.style.fill = style.color;
     // Clipped to the characters that fit each column at this font size rather than
     // wrapped; a Feed row is a glance, not a read.
-    who.text = clip(entry.actor ?? "", 10);
+    who.text = clip(entry.actor ?? "", 12);
     time.text = clock(entry.at);
     pillText.text = clip(entry.repo.split("/").pop(), 16);
     pillText.position.set(10, 5);
