@@ -1157,6 +1157,12 @@ const sample = (type) => ({
   title: "Demo pull request",
   actor: "demo-user",
 });
+// ?demo: auto-run the full tour shortly after load — lets a plain URL show the
+// board off with no console. Audio needs one click/tap (browser autoplay rules);
+// the resume listener below turns that first click into sound for the rest.
+if (location.search.includes("demo")) setTimeout(() => window.arcade.demo(), 1500);
+addEventListener("pointerdown", () => audio?.resume?.(), { once: true });
+
 window.arcade = {
   app, // arcade.app.ticker.stop() / .update(t) steps an animation frame by frame
   celebrate: (type = "pr-merged", audible = true) => celebrate(type, sample(type), audible),
