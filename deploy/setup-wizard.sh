@@ -333,6 +333,11 @@ pause "Enter to expose the server publicly"
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
 stage "Tailscale Funnel — public HTTPS for the webhook"
+# Re-runs land here with the funnel already serving — nothing to do, skip the
+# manual cert walk entirely.
+if tailscale funnel status 2>/dev/null | grep -q "127.0.0.1:$PORT"; then
+  ok "Funnel already serving https://$TS_HOST → 127.0.0.1:$PORT"
+else
 say "Funnel puts https://$TS_HOST on the public internet, forwarded to the"
 say "server on port $PORT. It needs HTTPS certificates — enabled once per"
 say "tailnet in the admin console. Both switches live on the DNS page:"
@@ -366,6 +371,7 @@ say "Starting the funnel in the background (survives reboots)..."
 sudo tailscale funnel --bg "$PORT" || warn "funnel didn't start — read the message above"
 verify "funnel is serving port $PORT" \
   bash -c "tailscale funnel status | grep -q '$PORT'"
+fi
 WEBHOOK_URL="https://$TS_HOST/webhook"
 ok "webhook URL will be: $WEBHOOK_URL"
 pause "Enter to set up the code"
