@@ -1046,46 +1046,49 @@ function chime(at = "") {
   play("day-chime");
   const scene = new Container();
   const endOfDay = at === "17:00";
-  // The board talks to the whole team, not to a single player at a cabinet.
-  const text = endOfDay
+  // Headline stays arcade; the practical call-to-action rides beneath it.
+  const headline = endOfDay
     ? `${at}  GAME OVER — GREAT RUN TEAM`
     : `${at}  GOOD MORNING TEAM — PRESS START`;
-  const banner = label(text, 54, C.magenta, {
+  const standCall = endOfDay ? "TIME FOR STAND DOWN" : "TIME FOR STAND UP";
+  // Sign-off honours whoever wore the crown when the whistle blew.
+  const congratsText =
+    endOfDay && currentMvp
+      ? `CONGRATULATIONS TO TODAY'S MVP, ${String(currentMvp.name).toUpperCase()} — YOU CRUSHED IT!`
+      : null;
+
+  const banner = label(headline, 54, C.magenta, {
     dropShadow: { color: 0x000000, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 1 },
   });
-  banner.anchor.set(0.5);
-  banner.position.set(W / 2, H / 2);
-  // Sign-off honours whoever wore the crown when the whistle blew.
-  const congrats =
-    endOfDay && currentMvp
-      ? label(
-          `CONGRATULATIONS TO TODAY'S MVP, ${String(currentMvp.name).toUpperCase()} — YOU CRUSHED IT!`,
-          38,
-          C.amber,
-        )
-      : null;
+  const stand = label(standCall, 38, C.ink);
+  const congrats = congratsText ? label(congratsText, 38, C.amber) : null;
+  const rows = congrats ? [banner, stand, congrats] : [banner, stand];
+
   const backing = new Sprite(dotTexture());
   backing.anchor.set(0.5);
   backing.width = W;
-  backing.height = congrats ? 220 : 140;
+  backing.height = congrats ? 300 : 230;
   backing.tint = 0x000000;
   backing.alpha = 0.75;
   backing.position.set(W / 2, H / 2);
-  scene.addChild(backing, banner);
-  if (congrats) {
-    banner.position.y = H / 2 - 42;
-    congrats.anchor.set(0.5);
-    congrats.position.set(W / 2, H / 2 + 44);
-    congrats.alpha = 0;
-    scene.addChild(congrats);
-  }
+  scene.addChild(backing);
+  rows.forEach((row, i) => {
+    row.anchor.set(0.5);
+    row.position.set(W / 2, H / 2 + (i - (rows.length - 1) / 2) * 76);
+    if (i > 0) row.alpha = 0;
+    scene.addChild(row);
+  });
+
   // A chime is an occasion: it owns the screen for a while.
   ambientScene(scene, 10_000, (progress, elapsed) => {
     const fade =
       progress < 0.05 ? progress / 0.05 : progress > 0.92 ? (1 - progress) / 0.08 : 1;
     scene.alpha = fade;
     banner.scale.set(0.9 + Math.min(fade, 1) * 0.1);
-    if (congrats) congrats.alpha = Math.min(Math.max((elapsed - 900) / 500, 0), 1) * fade;
+    // The extra lines fade in one beat apart.
+    rows.forEach((row, i) => {
+      if (i > 0) row.alpha = Math.min(Math.max((elapsed - 600 * i) / 500, 0), 1) * fade;
+    });
   });
 }
 
