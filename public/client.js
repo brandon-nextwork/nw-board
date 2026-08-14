@@ -73,6 +73,30 @@ function fitToWindow() {
 addEventListener("resize", fitToWindow);
 fitToWindow();
 
+// ?fps: an on-TV diagnostic — frame rate plus which renderer WebGL actually got.
+// "V3D" means the Pi's GPU is doing the work; "SwiftShader"/"llvmpipe" means
+// software rendering and explains any slow motion better than guessing.
+if (location.search.includes("fps")) {
+  let rendererName = "unknown";
+  try {
+    const gl = app.renderer.gl;
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    rendererName = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : "no-gl";
+  } catch {
+    rendererName = "webgpu";
+  }
+  const fpsText = new Text({
+    text: "",
+    style: { fontFamily: "monospace", fontSize: 26, fill: 0x00ff88 },
+  });
+  fpsText.position.set(8, 8);
+  fpsText.zIndex = 1000;
+  app.stage.addChild(fpsText);
+  setInterval(() => {
+    fpsText.text = `${app.ticker.FPS.toFixed(0)} FPS — ${rendererName}`;
+  }, 500);
+}
+
 // Draw order: background, panels, ambient effects, then celebration takeovers on top.
 const layers = {
   back: new Container(),
