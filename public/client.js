@@ -843,7 +843,7 @@ function mergedTakeover(event, done) {
   runScene(
     layers.takeover,
     scene,
-    3200,
+    5000,
     (progress, elapsed, delta) => {
       dim.alpha = Math.min(progress * 4, 0.75) * (progress > 0.85 ? (1 - progress) / 0.15 : 1);
       banner.scale.set(Math.min(elapsed / 220, 1) * (1 + Math.sin(elapsed / 160) * 0.06));
@@ -897,7 +897,7 @@ function approvedTakeover(event, done) {
   runScene(
     layers.takeover,
     scene,
-    2400,
+    5000,
     (progress, elapsed, delta) => {
       dim.alpha = Math.min(progress * 5, 0.7) * (progress > 0.85 ? (1 - progress) / 0.15 : 1);
       // The stamp drops fast, overshoots, settles.
@@ -1156,8 +1156,8 @@ window.arcade = {
     setTimeout(() => setMvp({ name: "Maximus", count: 12 }), 6400);
     setTimeout(() => window.arcade.celebrate("pr-merged"), 6600);
     setTimeout(() => window.arcade.celebrate("review-approved"), 6800);
-    setTimeout(() => chime("09:00"), 13_500);
-    setTimeout(() => chime("17:00"), 17_500);
-    setTimeout(() => setMvp(currentMvp), 21_500);
+    setTimeout(() => chime("09:00"), 17_500);
+    setTimeout(() => chime("17:00"), 21_500);
+    setTimeout(() => setMvp(currentMvp), 25_500);
   },
 };
