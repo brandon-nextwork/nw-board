@@ -8,7 +8,8 @@
 
 set -euo pipefail
 
-URL="http://localhost:3000/"
+# PR_ARCADE_FPS=1 adds the ?fps overlay: frame rate + which GPU/renderer WebGL got.
+URL="http://localhost:3000/${PR_ARCADE_FPS:+?fps}"
 
 # Wait for something to draw on: this service can start before the compositor
 # after a cold boot. Detected rather than hardcoded in the unit, because the
@@ -47,6 +48,10 @@ fi
 
 # --autoplay-policy is load-bearing: without it Chromium mutes the jingles
 # because a display-only page never gets a user gesture.
+# The GPU flags are load-bearing on a Pi: under XWayland Chromium often falls
+# back to software WebGL (SwiftShader/llvmpipe) and the whole board runs in
+# slow motion. ozone-platform-hint=auto picks native Wayland when the session
+# has it, which is where V3D acceleration actually works.
 exec "$CHROMIUM" \
   --kiosk \
   --noerrdialogs \
@@ -55,4 +60,8 @@ exec "$CHROMIUM" \
   --disable-features=Translate \
   --check-for-update-interval=31536000 \
   --autoplay-policy=no-user-gesture-required \
+  --ozone-platform-hint=auto \
+  --ignore-gpu-blocklist \
+  --enable-gpu-rasterization \
+  --enable-zero-copy \
   "$URL"
