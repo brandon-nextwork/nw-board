@@ -364,3 +364,35 @@ test("a missing GITHUB_TOKEN skips Backfill instead of crashing the server", asy
   expect(snapshot.feed).toEqual([{ ...mergedEvent, at: NOW }]);
   expect(api.requests).toEqual([]);
 });
+
+test("a Tracked Repo the token cannot read loses only its own history, not the whole board", async () => {
+  const { base } = await stubGitHubApi((url) => {
+    // The PAT was never granted `features`: GitHub answers 404 for it.
+    if (url.includes("/nextworkengineering/features/")) return 404;
+    if (url.includes("/nextworkengineering/projects-app/pulls?state=closed"))
+      return [
+        {
+          number: 2359,
+          title: "Upgrade Gemini models",
+          user: { login: "krishna" },
+          updated_at: ago(2 * HOUR),
+          merged_at: ago(2 * HOUR),
+        },
+      ];
+    return [];
+  });
+  running = await start(base);
+
+  // projects-app's merge from earlier today must survive features' 404.
+  const snapshot = await connectAndReadSnapshot(running.port);
+  expect(snapshot.feed).toEqual([
+    {
+      type: "pr-merged",
+      repo: "nextworkengineering/projects-app",
+      number: 2359,
+      title: "Upgrade Gemini models",
+      actor: "krishna",
+      at: NOW - 2 * HOUR,
+    },
+  ]);
+});
