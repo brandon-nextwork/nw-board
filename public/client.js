@@ -52,22 +52,25 @@ const CELEBRATIONS = new Set(["pr-merged", "review-approved"]);
 
 // antialias off keeps the pixel art crisp and is one less thing for the Pi's GPU to do.
 const app = new Application();
-await app.init({ background: C.bg, antialias: false, resizeTo: window });
+// Always render at the 1080p design resolution, whatever the TV negotiated — a 4K
+// window would quadruple the pixels the Pi pushes per frame, which lands it under
+// Pixi's 10fps clock clamp and everything plays in slow motion. The finished 2MP
+// frame is scaled to the screen by CSS instead; `pixelated` keeps the chunky look.
+await app.init({ background: C.bg, antialias: false, width: W, height: H, resolution: 1 });
 document.body.appendChild(app.canvas);
+app.canvas.style.position = "absolute";
+app.canvas.style.imageRendering = "pixelated";
 
-// Everything lives under `world`, which is scaled to fit the window. The kiosk runs
-// 1920x1080 so the scale is 1 there; anything else letterboxes rather than reflows.
 const world = new Container();
 app.stage.addChild(world);
 function fitToWindow() {
-  const scale = Math.min(app.screen.width / W, app.screen.height / H);
-  world.scale.set(scale);
-  world.position.set(
-    (app.screen.width - W * scale) / 2,
-    (app.screen.height - H * scale) / 2,
-  );
+  const scale = Math.min(innerWidth / W, innerHeight / H);
+  app.canvas.style.width = `${W * scale}px`;
+  app.canvas.style.height = `${H * scale}px`;
+  app.canvas.style.left = `${(innerWidth - W * scale) / 2}px`;
+  app.canvas.style.top = `${(innerHeight - H * scale) / 2}px`;
 }
-app.renderer.on("resize", fitToWindow);
+addEventListener("resize", fitToWindow);
 fitToWindow();
 
 // Draw order: background, panels, ambient effects, then celebration takeovers on top.
