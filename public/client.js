@@ -299,7 +299,7 @@ marquee.addChild(
     .stroke({ width: 5, color: C.magenta }),
 );
 
-const title = label("PR ARCADE", 62, C.magenta, {
+const title = label("NEXTWORK ARCADE", 62, C.magenta, {
   dropShadow: { color: C.ink, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 0.9 },
 });
 title.position.set(48, 52);
@@ -335,8 +335,8 @@ const bulbs = Array.from({ length: 44 }, (_, i) => {
 // Feed panel: the last 24h of tracked events, newest at the top.
 // --------------------------------------------------------------------------------
 
-const FEED_ROWS = 14;
-const feedPanel = panel(24, 204, 1160, 852, "LIVE FEED // LAST 24H", C.ink);
+const FEED_ROWS = 12;
+const feedPanel = panel(24, 204, 1872, 756, "LIVE FEED // LAST 24H", C.ink);
 const feedEmpty = label("...WAITING FOR PLAYERS...", 26, C.dim);
 feedEmpty.position.set(24, 90);
 feedPanel.addChild(feedEmpty);
@@ -374,34 +374,61 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
 // In Flight panel: the open PRs, as cabinets on the "now playing" wall.
 // --------------------------------------------------------------------------------
 
-const FLIGHT_CARDS = 7;
-const flightPanel = panel(1208, 204, 688, 852, "NOW PLAYING // IN FLIGHT", C.green);
-const flightEmpty = label("NO PRS IN FLIGHT", 24, C.dim);
-flightEmpty.position.set(24, 90);
-flightPanel.addChild(flightEmpty);
+// --------------------------------------------------------------------------------
+// Now Playing ticker: every open PR loops forever across a strip at the bottom.
+// --------------------------------------------------------------------------------
 
-const flightCards = Array.from({ length: FLIGHT_CARDS }, (_, i) => {
-  const card = new Container();
-  card.position.set(20, 82 + i * 104);
-  card.visible = false;
-  card.addChild(
-    new Graphics()
-      .roundRect(0, 0, 648, 92, 8)
-      .fill({ color: 0x1d1d4a })
-      .stroke({ width: 3, color: C.green, alpha: 0.6 }),
-  );
-  const head = label("", 24, C.green);
-  head.position.set(16, 12);
-  const body = label("", 22, C.ink);
-  body.position.set(16, 48);
-  card.addChild(head, body);
-  flightPanel.addChild(card);
-  return { card, head, body };
-});
+const TICKER_Y = 968;
+const TICKER_H = 96;
+const TICKER_GAP = 110;
+const TICKER_SPEED = 0.09; // px per ms — a lap of one 1920px screen every ~21s
 
-const flightMore = label("", 22, C.dim);
-flightMore.position.set(36, 82 + FLIGHT_CARDS * 104);
-flightPanel.addChild(flightMore);
+const tickerStrip = new Container();
+tickerStrip.addChild(
+  new Graphics()
+    .rect(0, TICKER_Y, W, TICKER_H)
+    .fill({ color: C.panel, alpha: 0.92 })
+    .rect(0, TICKER_Y, W, 4)
+    .fill({ color: C.panelEdge }),
+);
+const tickerContent = new Container();
+tickerStrip.addChild(tickerContent);
+layers.board.addChild(tickerStrip);
+
+/** One pass of the loop: a NOW PLAYING marker, then every open PR as a segment. */
+function tickerSequence(openPrs) {
+  const seq = new Container();
+  let x = 0;
+  const put = (child) => {
+    child.position.x = x;
+    seq.addChild(child);
+    x += child.width + TICKER_GAP;
+  };
+  const marker = label("★ NOW PLAYING ★", 28, C.green);
+  marker.position.y = TICKER_Y + 34;
+  put(marker);
+  if (!openPrs.length) {
+    const none = label("NO PRS IN FLIGHT — INSERT PULL REQUEST", 28, C.dim);
+    none.position.y = TICKER_Y + 34;
+    put(none);
+  }
+  for (const pr of openPrs) {
+    const item = new Container();
+    const pillText = label(pr.repo.split("/").pop(), 20, C.green, { letterSpacing: 1 });
+    pillText.position.set(12, TICKER_Y + 38);
+    const pill = new Graphics()
+      .roundRect(0, TICKER_Y + 30, Math.ceil(pillText.width) + 24, 38, 8)
+      .fill({ color: C.white, alpha: 0.05 })
+      .stroke({ color: C.green, alpha: 0.6, width: 2 });
+    const head = label(`#${pr.number} ${pr.actor ?? ""}`.trimEnd(), 28, C.amber);
+    head.position.set(Math.ceil(pillText.width) + 40, TICKER_Y + 34);
+    const text = label(clip(pr.title, 60), 28, C.ink);
+    text.position.set(head.position.x + head.width + 28, TICKER_Y + 34);
+    item.addChild(pill, pillText, head, text);
+    put(item);
+  }
+  return { seq, width: x };
+}
 
 // --------------------------------------------------------------------------------
 // Board state and rendering.
@@ -448,7 +475,7 @@ function renderFeed() {
     // 24px monospace + letterSpacing 2 ≈ 16.5px per glyph.
     title.text = clip(
       `#${entry.number}  ${entry.title}`,
-      Math.max(0, Math.floor((1116 - title.position.x) / 16.5)),
+      Math.max(0, Math.floor((1828 - title.position.x) / 16.5)),
     );
     // Older entries fade toward the bottom of the panel, so the eye lands on the top.
     row.alpha = 1 - i * 0.045;
@@ -458,23 +485,28 @@ function renderFeed() {
 // An idle board still has to age entries out; a minute of granularity is plenty.
 setInterval(renderFeed, 60_000);
 
+let tickerLoop = 1;
 function renderFlight(openPrs) {
-  flightEmpty.visible = openPrs.length === 0;
-  for (let i = 0; i < FLIGHT_CARDS; i++) {
-    const pr = openPrs[i];
-    const { card, head, body } = flightCards[i];
-    card.visible = Boolean(pr);
-    if (!pr) continue;
-    // The author, not whoever last touched it: an open PR belongs to whoever raised it.
-    head.text = clip(
-      `${pr.repo.split("/").pop()} #${pr.number}  ${pr.actor ?? ""}`.trimEnd(),
-      36,
-    );
-    body.text = clip(pr.title, 38);
+  for (const old of tickerContent.removeChildren()) old.destroy({ children: true });
+  const first = tickerSequence(openPrs);
+  tickerLoop = first.width;
+  // Enough copies that the strip never shows a gap: the screen plus one full loop.
+  // ponytail: rebuilt wholesale on every snapshot — cheap at snapshot frequency.
+  const copies = Math.max(2, Math.ceil(W / tickerLoop) + 1);
+  first.seq.position.x = 0;
+  tickerContent.addChild(first.seq);
+  for (let i = 1; i < copies; i++) {
+    const { seq } = tickerSequence(openPrs);
+    seq.position.x = i * tickerLoop;
+    tickerContent.addChild(seq);
   }
-  const hidden = openPrs.length - FLIGHT_CARDS;
-  flightMore.text = hidden > 0 ? `+${hidden} MORE IN FLIGHT` : "";
+  if (tickerContent.position.x <= -tickerLoop) tickerContent.position.x = 0;
 }
+
+app.ticker.add((t) => {
+  tickerContent.x -= TICKER_SPEED * t.deltaMS;
+  if (tickerContent.x <= -tickerLoop) tickerContent.x += tickerLoop;
+});
 
 // Team Score marquee tick-up: the display counts toward the real score instead of
 // snapping, which is the whole point of a score display.
@@ -837,9 +869,10 @@ function prOpenedAnimation() {
     puff.spin = 0;
     return puff;
   });
+  // Flies the width of the screen just above the Now Playing ticker it's joining.
   ambientScene(scene, 1600, (progress, elapsed) => {
-    rocket.x = -80 + progress * (1552 + 80);
-    rocket.y = 700 - progress * 300 + Math.sin(elapsed / 120) * 12;
+    rocket.x = -80 + progress * (W + 160);
+    rocket.y = 900 - progress * 60 + Math.sin(elapsed / 120) * 12;
     rocket.alpha = progress > 0.85 ? (1 - progress) / 0.15 : 1;
     const puff = trail[Math.floor(elapsed / 90) % trail.length];
     puff.position.set(rocket.x - 40, rocket.y + 6);
@@ -866,7 +899,7 @@ function prClosedAnimation() {
 function changesRequestedAnimation() {
   const scene = new Container();
   const flash = new Graphics()
-    .roundRect(24, 204, 1160, 852, 10)
+    .roundRect(24, 204, 1872, 756, 10)
     .stroke({ width: 6, color: C.red });
   scene.addChild(flash);
   const bang = pixelSprite("bang", 12);
