@@ -25,6 +25,18 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 
+# The board renders 1080p; a 4K output makes V3D composite ~8MP twice per frame
+# (10 FPS territory), and many TVs only take 4K at 30Hz anyway. Force 1080p60 and
+# let the TV's scaler do the stretch. Best-effort: a TV with no such mode keeps
+# whatever the compositor picked.
+if command -v wlr-randr >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  OUTPUT="$(wlr-randr | awk 'NR==1 {print $1}')"
+  if [ -n "$OUTPUT" ]; then
+    wlr-randr --output "$OUTPUT" --mode 1920x1080@60 2>/dev/null \
+      || echo "kiosk: could not force 1080p on $OUTPUT; check wlr-randr" >&2
+  fi
+fi
+
 # Chromium caches whatever it loads first, so don't start it until the server
 # is actually answering — otherwise the TV shows a connection-refused page.
 until curl -sfo /dev/null "$URL"; do sleep 2; done
