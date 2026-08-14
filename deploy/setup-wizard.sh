@@ -344,8 +344,20 @@ step "Scroll down to 'HTTPS Certificates' → 'Enable HTTPS...' → confirm"
 note "    This lets Tailscale mint Let's Encrypt certs for $TS_HOST."
 pause "Enter when both are on — the next check mints a cert to prove it"
 say "Requesting a certificate (the first mint can take a minute)..."
-verify "HTTPS certificates enabled — minted a cert for $TS_HOST" \
-  bash -c "cd \"\$(mktemp -d)\" && sudo tailscale cert \"$TS_HOST\""
+# Run the mint with its output VISIBLE — the errors are the diagnostics
+# ("not enabled" = toggle not picked up yet, try 'sudo tailscale up'; ACME
+# timeouts = Let's Encrypt is slow on the first mint, just retry).
+CERT_DIR=$(mktemp -d)
+while ! (cd "$CERT_DIR" && sudo tailscale cert "$TS_HOST"); do
+  fail "cert mint failed — the message above says why"
+  note "    'not enabled': wait a minute or run 'sudo tailscale up', then retry."
+  note "    ACME/timeout: the first mint can be slow — just retry."
+  if ! confirm "Retry the mint?"; then
+    SKIPPED+=("HTTPS certificate for $TS_HOST (funnel will retry on first request)")
+    break
+  fi
+done
+[[ -f "$CERT_DIR/$TS_HOST.crt" ]] && ok "HTTPS certificates enabled — minted a cert for $TS_HOST"
 say "Funnel also needs the 'funnel' node attribute in the tailnet policy."
 step "If the funnel below refuses to start, Tailscale prints the exact link"
 note "    and policy JSON to add — it's one paste in Access Controls:"
