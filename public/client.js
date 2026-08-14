@@ -592,6 +592,7 @@ app.ticker.add((t) => {
 const FLASH_MS = 500;
 let flashLeft = 0;
 let mvpFill = C.dim;
+let currentMvp = null;
 function setMvp(mvp) {
   // First name only: the board has one line of marquee, not a full name.
   const name = mvp ? String(mvp.name).split(" ")[0] : "ANYONE'S GAME";
@@ -1090,7 +1091,8 @@ function handleMessage(data) {
   }
   if (data.type === "snapshot") {
     feed = data.feed.map(stamp);
-    setMvp(data.mvp);
+    currentMvp = data.mvp;
+    setMvp(currentMvp);
     renderFlight(data.openPrs);
   } else {
     feed.push(stamp(data));
@@ -1145,12 +1147,17 @@ window.arcade = {
   setMvp,
   event: handleMessage,
   demo() {
+    // Every animation and sound in order, then back to the real board state:
+    // 4 ambients -> fake MVP + both takeovers (queued) -> both Day Chimes ->
+    // restore the MVP the server last sent.
     ["pr-opened", "pr-comment", "changes-requested", "pr-closed"].forEach((type, i) =>
       setTimeout(() => ambient(type), i * 1600),
     );
     setTimeout(() => setMvp({ name: "Maximus", count: 12 }), 6400);
     setTimeout(() => window.arcade.celebrate("pr-merged"), 6600);
     setTimeout(() => window.arcade.celebrate("review-approved"), 6800);
-    setTimeout(() => chime("09:00"), 13_000);
+    setTimeout(() => chime("09:00"), 13_500);
+    setTimeout(() => chime("17:00"), 17_500);
+    setTimeout(() => setMvp(currentMvp), 21_500);
   },
 };
