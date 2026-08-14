@@ -156,3 +156,18 @@ test.for([
     /points/,
   );
 });
+
+test("a freshly opened PR appears at the head of the In Flight list, not buried at the tail", async () => {
+  running = await start();
+
+  await postWebhook(running.port, { body: opened }); // #42
+  const newest = JSON.stringify({
+    ...JSON.parse(merged),
+    action: "opened",
+    pull_request: { ...JSON.parse(merged).pull_request, number: 77, title: "Newest work", merged: false },
+  });
+  await postWebhook(running.port, { body: newest });
+
+  const snapshot = await readSnapshot(running.port);
+  expect(snapshot.openPrs.map((pr: any) => pr.number)).toEqual([77, 42]);
+});
