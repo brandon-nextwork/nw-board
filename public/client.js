@@ -1021,28 +1021,47 @@ const ambient = (type) => AMBIENT[type]?.();
 function chime(at = "") {
   play("day-chime");
   const scene = new Container();
+  const endOfDay = at === "17:00";
   // The board talks to the whole team, not to a single player at a cabinet.
-  const text =
-    at === "17:00"
-      ? `${at}  GAME OVER — GREAT RUN TEAM`
-      : `${at}  GOOD MORNING TEAM — PRESS START`;
+  const text = endOfDay
+    ? `${at}  GAME OVER — GREAT RUN TEAM`
+    : `${at}  GOOD MORNING TEAM — PRESS START`;
   const banner = label(text, 54, C.magenta, {
     dropShadow: { color: 0x000000, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 1 },
   });
   banner.anchor.set(0.5);
   banner.position.set(W / 2, H / 2);
+  // Sign-off honours whoever wore the crown when the whistle blew.
+  const congrats =
+    endOfDay && currentMvp
+      ? label(
+          `CONGRATULATIONS TO TODAY'S MVP, ${String(currentMvp.name).toUpperCase()} — YOU CRUSHED IT!`,
+          38,
+          C.amber,
+        )
+      : null;
   const backing = new Sprite(dotTexture());
   backing.anchor.set(0.5);
   backing.width = W;
-  backing.height = 140;
+  backing.height = congrats ? 220 : 140;
   backing.tint = 0x000000;
   backing.alpha = 0.75;
   backing.position.set(W / 2, H / 2);
   scene.addChild(backing, banner);
-  ambientScene(scene, 2600, (progress) => {
-    const fade = progress < 0.15 ? progress / 0.15 : progress > 0.8 ? (1 - progress) / 0.2 : 1;
+  if (congrats) {
+    banner.position.y = H / 2 - 42;
+    congrats.anchor.set(0.5);
+    congrats.position.set(W / 2, H / 2 + 44);
+    congrats.alpha = 0;
+    scene.addChild(congrats);
+  }
+  // A chime is an occasion: it owns the screen for a while.
+  ambientScene(scene, 10_000, (progress, elapsed) => {
+    const fade =
+      progress < 0.05 ? progress / 0.05 : progress > 0.92 ? (1 - progress) / 0.08 : 1;
     scene.alpha = fade;
-    banner.scale.set(0.9 + fade * 0.1);
+    banner.scale.set(0.9 + Math.min(fade, 1) * 0.1);
+    if (congrats) congrats.alpha = Math.min(Math.max((elapsed - 900) / 500, 0), 1) * fade;
   });
 }
 
@@ -1153,11 +1172,21 @@ window.arcade = {
     ["pr-opened", "pr-comment", "changes-requested", "pr-closed"].forEach((type, i) =>
       setTimeout(() => ambient(type), i * 1600),
     );
-    setTimeout(() => setMvp({ name: "Maximus", count: 12 }), 6400);
+    // The fake MVP goes into currentMvp too, so the 17:00 chime's congrats line
+    // has a name to honour; restored afterwards unless a real snapshot already did.
+    const real = currentMvp;
+    const fake = { name: "Maximus", count: 12 };
+    setTimeout(() => {
+      currentMvp = fake;
+      setMvp(fake);
+    }, 6400);
     setTimeout(() => window.arcade.celebrate("pr-merged"), 6600);
     setTimeout(() => window.arcade.celebrate("review-approved"), 6800);
     setTimeout(() => chime("09:00"), 17_500);
-    setTimeout(() => chime("17:00"), 21_500);
-    setTimeout(() => setMvp(currentMvp), 25_500);
+    setTimeout(() => chime("17:00"), 28_500);
+    setTimeout(() => {
+      if (currentMvp === fake) currentMvp = real;
+      setMvp(currentMvp);
+    }, 39_500);
   },
 };
