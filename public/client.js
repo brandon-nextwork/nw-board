@@ -15,6 +15,7 @@ import {
   Graphics,
   Sprite,
   Text,
+  Texture,
 } from "./vendor/pixi.min.mjs";
 
 // The scene is authored at 1080p and scaled to fit whatever the TV reports, so the
@@ -166,14 +167,15 @@ const SPRITES = {
     "dwwwwwwd",
     "dddddddd",
   ],
+  // A tapered bar over a square dot: reads as "!" even at 32px.
   bang: [
+    "..rrrr..",
+    "..rwrr..",
+    "..rrrr..",
     "...rr...",
-    "..rrrr..",
-    "..rrrr..",
-    "..rrrr..",
     "...rr...",
     "........",
-    "..rrrr..",
+    "...rr...",
     "...rr...",
   ],
   bubble: [
@@ -262,18 +264,40 @@ function texture(name, draw) {
   return cached;
 }
 
+// Sprites are baked as exact texels on a tiny canvas — Graphics rasterization
+// antialiases 1px rects and everything downstream magnifies the mush. A dark
+// outline pass (the classic arcade trick) makes every sprite pop off the board.
 function pixelTexture(name) {
-  return texture(name, (g) => {
-    const rows = SPRITES[name];
-    // A transparent backing rect pins the texture to a full 8x8 so every sprite of
-    // every shape shares one anchor and one scale.
-    g.rect(0, 0, rows[0].length, rows.length).fill({ color: 0, alpha: 0 });
-    rows.forEach((row, y) =>
-      [...row].forEach((char, x) => {
-        if (PX[char] !== undefined) g.rect(x, y, 1, 1).fill(PX[char]);
-      }),
-    );
-  });
+  let cached = textures.get(name);
+  if (cached) return cached;
+  const rows = SPRITES[name];
+  const canvas = document.createElement("canvas");
+  canvas.width = rows[0].length;
+  canvas.height = rows.length;
+  const ctx = canvas.getContext("2d");
+  const inked = (x, y) => PX[rows[y]?.[x]] !== undefined;
+  rows.forEach((row, y) =>
+    [...row].forEach((char, x) => {
+      if (PX[char] !== undefined) {
+        ctx.fillStyle = `#${PX[char].toString(16).padStart(6, "0")}`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }),
+  );
+  ctx.fillStyle = "#05050f";
+  rows.forEach((row, y) =>
+    [...row].forEach((char, x) => {
+      if (
+        PX[char] === undefined &&
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => inked(x + dx, y + dy))
+      )
+        ctx.fillRect(x, y, 1, 1);
+    }),
+  );
+  cached = Texture.from(canvas);
+  cached.source.scaleMode = "nearest";
+  textures.set(name, cached);
+  return cached;
 }
 
 const dotTexture = () => texture("dot", (g) => g.rect(0, 0, 2, 2).fill(C.white));
