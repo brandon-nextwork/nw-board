@@ -45,3 +45,14 @@ journalctl -u pr-arcade -f               # server logs
 systemctl --user status pr-arcade-kiosk  # kiosk (run on the Pi's own session)
 tailscale funnel status                  # is the public URL live
 ```
+
+## Exiting the kiosk
+
+Escape/Ctrl+C won't work — `--kiosk` Chromium ignores them, and the unit would
+restart it anyway. Stop the unit instead (from SSH, or Ctrl+Alt+F2 for a console):
+
+```sh
+systemctl --user stop pr-arcade-kiosk            # exit until next boot/start
+systemctl --user disable --now pr-arcade-kiosk   # exit and stay off after reboots
+systemctl --user start pr-arcade-kiosk           # bring the board back
+```
