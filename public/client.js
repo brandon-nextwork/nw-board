@@ -182,6 +182,44 @@ const SPRITES = {
     ".yooooy.",
     "..yyyy..",
   ],
+  // 16x16 takeover-grade art: at slam scale an 8x8 art pixel is a ~2cm blob on the
+  // TV, so the two sprites that get blown up carry four times the detail.
+  trophy16: [
+    "................",
+    "..wyyyyyyyyyyw..",
+    ".oyyyyyyyyyyyyo.",
+    ".oyywyyyyyywyyo.",
+    ".oyywyyyyyywyyo.",
+    ".oyyyyyyyyyyyyo.",
+    "..oyyyyyyyyyyo..",
+    "...oyyyyyyyyo...",
+    "....oyyyyyyo....",
+    "......yyyy......",
+    ".......yy.......",
+    ".......yy.......",
+    "......oyyo......",
+    "....oooyyooo....",
+    "...oooooooooo...",
+    "................",
+  ],
+  check16: [
+    "................",
+    "..............g.",
+    ".............gg.",
+    "............ggg.",
+    "...........ggg..",
+    "..........ggg...",
+    ".........ggg....",
+    ".g......ggg.....",
+    ".gg....gggg.....",
+    ".ggg..ggg.......",
+    "..ggggggg.......",
+    "...ggggg........",
+    "....ggg.........",
+    ".....g..........",
+    "................",
+    "................",
+  ],
 };
 
 // Textures are baked once and shared by every sprite that uses them; nothing in an
@@ -735,7 +773,7 @@ function mergedTakeover(event, done) {
     "merged by",
   );
 
-  const trophy = pixelSprite("trophy", 14);
+  const trophy = pixelSprite("trophy16", 7);
   trophy.position.set(W / 2, H / 2 - 240);
   scene.addChild(trophy);
 
@@ -803,7 +841,7 @@ function approvedTakeover(event, done) {
   ring.position.set(W / 2, H / 2 - 40);
   scene.addChildAt(ring, 1);
 
-  const stamp = pixelSprite("check", 20, C.green);
+  const stamp = pixelSprite("check16", 10, C.green);
   stamp.position.set(W / 2, H / 2 - 250);
   scene.addChild(stamp);
 
