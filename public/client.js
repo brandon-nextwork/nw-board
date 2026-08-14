@@ -320,9 +320,10 @@ mvpName.anchor.set(1, 0);
 mvpName.position.set(1824, 72);
 marquee.addChild(mvpName);
 
-const mvpTally = label("", 28, C.dim);
+const mvpTally = label("", 38, C.dim);
 mvpTally.anchor.set(1, 1);
-mvpTally.position.set(1824, 158);
+// Bottom-aligned with the name's baseline, clear of the marquee's lower border.
+mvpTally.position.set(1824, 138);
 marquee.addChild(mvpTally);
 
 const bulbs = Array.from({ length: 44 }, (_, i) => {
