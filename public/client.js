@@ -351,15 +351,23 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   icon.position.set(24, 22);
   const kind = label("", 24, C.ink);
   kind.position.set(56, 8);
-  // Actor gets its own column so the logins line up down the panel; the body
-  // gives up the width it takes.
+  // First names are short, so the name and time sit tight together and the
+  // title gets everything to the right of the repo pill.
   const who = label("", 24, C.ink);
   who.position.set(196, 8);
-  const body = label("", 24, C.dim);
-  body.position.set(470, 8);
-  row.addChild(icon, kind, who, body);
+  const time = label("", 24, C.dim);
+  time.position.set(356, 8);
+  // Repo pill: a small rounded chip redrawn per render (width follows the text).
+  const pillBg = new Graphics();
+  const pillText = label("", 17, C.dim, { letterSpacing: 1 });
+  const pill = new Container();
+  pill.position.set(452, 6);
+  pill.addChild(pillBg, pillText);
+  const title = label("", 24, C.dim);
+  title.position.set(0, 8); // x set per render, after the pill
+  row.addChild(icon, kind, who, time, pill, title);
   feedPanel.addChild(row);
-  return { row, icon, kind, who, body };
+  return { row, icon, kind, who, time, pillBg, pillText, pill, title };
 });
 
 // --------------------------------------------------------------------------------
@@ -416,7 +424,7 @@ function renderFeed() {
   feedEmpty.visible = feed.length === 0;
   for (let i = 0; i < FEED_ROWS; i++) {
     const entry = feed[feed.length - 1 - i];
-    const { row, icon, kind, who, body } = feedRows[i];
+    const { row, icon, kind, who, time, pillBg, pillText, pill, title } = feedRows[i];
     row.visible = Boolean(entry);
     if (!entry) continue;
     const style = EVENTS[entry.type] ?? { name: entry.type, color: C.dim, icon: "star" };
@@ -425,10 +433,22 @@ function renderFeed() {
     kind.style.fill = style.color;
     // Clipped to the characters that fit each column at this font size rather than
     // wrapped; a Feed row is a glance, not a read.
-    who.text = clip(entry.actor ?? "", 16);
-    body.text = clip(
-      `${clock(entry.at)}  ${entry.repo.split("/").pop()} #${entry.number}  ${entry.title}`,
-      39,
+    who.text = clip(entry.actor ?? "", 10);
+    time.text = clock(entry.at);
+    pillText.text = clip(entry.repo.split("/").pop(), 16);
+    pillText.position.set(10, 5);
+    const pillWidth = Math.ceil(pillText.width) + 20;
+    pillBg
+      .clear()
+      .roundRect(0, 0, pillWidth, 30, 6)
+      .fill({ color: C.white, alpha: 0.06 })
+      .stroke({ color: C.dim, alpha: 0.7, width: 1.5 });
+    // Title starts just past the pill and runs to the panel edge.
+    title.position.x = pill.position.x + pillWidth + 14;
+    // 24px monospace + letterSpacing 2 ≈ 16.5px per glyph.
+    title.text = clip(
+      `#${entry.number}  ${entry.title}`,
+      Math.max(0, Math.floor((1116 - title.position.x) / 16.5)),
     );
     // Older entries fade toward the bottom of the panel, so the eye lands on the top.
     row.alpha = 1 - i * 0.045;
