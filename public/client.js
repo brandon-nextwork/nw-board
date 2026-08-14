@@ -476,16 +476,19 @@ const TICKER_H = 96;
 const TICKER_GAP = 110;
 const TICKER_SPEED = 0.09; // px per ms — a lap of one 1920px screen every ~21s
 
+// Framed like the marquee and the Feed panel: same side margins, same border.
 const tickerStrip = new Container();
 tickerStrip.addChild(
   new Graphics()
-    .rect(0, TICKER_Y, W, TICKER_H)
+    .roundRect(24, TICKER_Y, 1872, TICKER_H, 10)
     .fill({ color: C.panel, alpha: 0.92 })
-    .rect(0, TICKER_Y, W, 4)
-    .fill({ color: C.panelEdge }),
+    .stroke({ width: 4, color: C.panelEdge }),
 );
 const tickerContent = new Container();
-tickerStrip.addChild(tickerContent);
+// The scroll is clipped to the frame so segments don't poke into the margins.
+const tickerMask = new Graphics().roundRect(26, TICKER_Y, 1868, TICKER_H, 10).fill(0xffffff);
+tickerStrip.addChild(tickerMask, tickerContent);
+tickerContent.mask = tickerMask;
 layers.board.addChild(tickerStrip);
 
 /** One pass of the loop: a NOW PLAYING marker, then every open PR as a segment. */
