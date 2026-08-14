@@ -75,9 +75,6 @@ function toDomainEvent(
 /** Celebration Events are the loud ones; everything else is an Ambient Event. */
 const CELEBRATIONS = new Set(["pr-merged", "review-approved"]);
 
-/** The events that add to or remove from the list of currently open PRs. */
-const IN_FLIGHT_CHANGES = new Set(["pr-opened", "pr-merged", "pr-closed"]);
-
 /** "09:00" -> 540 minutes past local midnight. Anything else is a config error. */
 function minutesOfDay(value: unknown, complaint: string) {
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value));
@@ -95,13 +92,16 @@ type Options = {
   tickMs?: number;
 };
 
-/** Monday 00:00 local time of the week containing `at` — the Team Score week. */
+/** Monday 00:00 local time of the week containing `at` — the dedup window. */
 function startOfWeek(at: number) {
   const monday = new Date(at);
   monday.setHours(0, 0, 0, 0);
   monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
   return monday.getTime();
 }
+
+/** Local midnight of the day containing `at` — today's MVP starts here. */
+const startOfDay = (at: number) => new Date(at).setHours(0, 0, 0, 0);
 
 export async function startServer(port: number, options: Options = {}) {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -114,13 +114,6 @@ export async function startServer(port: number, options: Options = {}) {
   // A missing list would 400 every delivery; a bare string would match repos by substring.
   if (!Array.isArray(trackedRepos))
     throw new Error(`${configPath}: trackedRepos must be a list of "owner/name"`);
-
-  // Point values for the Celebration Events. Refuse to boot rather than score
-  // every merge as zero because someone fat-fingered the config.
-  const points: Record<string, number> = config.points ?? {};
-  for (const type of ["pr-merged", "review-approved"])
-    if (typeof points[type] !== "number")
-      throw new Error(`${configPath}: points.${type} must be a number`);
 
   // Team member names: GitHub login -> first name shown on the board. Optional;
   // an unmapped login displays as-is, so absence is a cosmetic gap, not an error.
@@ -167,35 +160,48 @@ export async function startServer(port: number, options: Options = {}) {
     actor: string;
   }[] = [];
 
-  // The Team Score: this week's Celebration Event points. Derived on read, so the
-  // weekly reset needs no timer — crossing Monday 00:00 simply zeroes it.
-  let score = 0;
-  let scoreWeek = startOfWeek(now());
   // The event types Backfill can rediscover after a restart, so a repeat delivery of
-  // one is the same event rather than a new one. Kept for the whole score week (not
-  // the Feed's 24h) so a redelivered merge cannot score twice. Ambient repeats — a
-  // second comment or a second changes-requested review — are genuinely new events.
+  // one is the same event rather than a new one. Kept for a whole week (not the Feed's
+  // 24h) because Backfill fetches back to the week start, so a webhook redelivered days
+  // later still meets its Backfilled twin. Ambient repeats — a second comment or a
+  // second changes-requested review — are genuinely new events.
   const BACKFILLED = new Set(["pr-merged", "pr-opened", "review-approved"]);
   const seen = new Set<string>();
-  const teamScore = () => {
+  let seenWeek = startOfWeek(now());
+  /** Forget last week's dedup keys once the week Backfill covers has moved on. */
+  const rollDedupWeek = () => {
     const week = startOfWeek(now());
-    if (week !== scoreWeek) {
-      scoreWeek = week;
-      score = 0;
-      seen.clear();
-    }
-    return score;
+    if (week === seenWeek) return;
+    seenWeek = week;
+    seen.clear();
+  };
+
+  // Today's MVP: the Actor with the most tracked events since local midnight. Derived
+  // from the Feed on read — its 24h window always contains today — so the midnight
+  // reset needs no state and no timer. Ties keep whoever reached the count first
+  // (Map insertion order plus a strict >).
+  const todaysMvp = () => {
+    const midnight = startOfDay(now());
+    const counts = new Map<string, number>();
+    for (const { at, event } of feed)
+      // GitHub named nobody: "" is not an Actor and cannot be an MVP.
+      if (at >= midnight && event.actor)
+        counts.set(event.actor, (counts.get(event.actor) ?? 0) + 1);
+    let mvp: { name: string; count: number } | null = null;
+    for (const [name, count] of counts)
+      if (!mvp || count > mvp.count) mvp = { name, count };
+    return mvp;
   };
 
   /**
-   * The one path into state: append to the Feed and credit the Team Score.
-   * Webhooks and Backfill both land here (Backfill with the event's real `at`),
-   * so the weekly score rebuilds from Backfill for free. Repeats of a Backfillable
-   * event (same type/repo/number, this week) are dropped — that's what stops a
-   * webhook duplicating what Backfill already fetched. Returns the points credited
-   * (0 for Ambient Events and older weeks), or null for a dropped repeat.
+   * The one path into state: append to the Feed (which the MVP is read from) and
+   * update the in-flight list. Webhooks and Backfill both land here (Backfill with the
+   * event's real `at`), so today's MVP rebuilds from Backfill for free. Repeats of a
+   * Backfillable event (same type/repo/number, this week) are dropped — that's what
+   * stops a webhook duplicating what Backfill already fetched. Returns true when the
+   * event was recorded, or null for a dropped repeat.
    */
-  const recordEvent = (event: DomainEvent, at: number = now()): number | null => {
+  const recordEvent = (event: DomainEvent, at: number = now()): true | null => {
     // An event with no parseable timestamp (a Backfilled PR missing created_at, say)
     // would sit in the Feed forever: the expiry loop stops at the first entry it
     // cannot age out. Undateable is unshowable, so drop it.
@@ -203,7 +209,7 @@ export async function startServer(port: number, options: Options = {}) {
     // Display names live here, the one path into state: mutating the caller's
     // event on purpose so the broadcast that follows carries the name too.
     event.actor = names[event.actor] ?? event.actor;
-    teamScore(); // roll the week over before deduping or crediting
+    rollDedupWeek(); // roll the week over before deduping
     const key = `${event.type}/${event.repo}/${event.number}`;
     if (BACKFILLED.has(event.type)) {
       if (seen.has(key)) return null;
@@ -220,9 +226,7 @@ export async function startServer(port: number, options: Options = {}) {
       openPrs.unshift({ repo, number, title, actor });
     if ((type === "pr-merged" || type === "pr-closed") && open >= 0)
       openPrs.splice(open, 1);
-    const earned = startOfWeek(at) === scoreWeek ? (points[event.type] ?? 0) : 0;
-    score += earned;
-    return earned;
+    return true;
   };
 
   const app = express();
@@ -232,11 +236,13 @@ export async function startServer(port: number, options: Options = {}) {
 
   // Display protocol (server -> client only):
   //   on connect: {"type":"snapshot","feed":[{<domain event>, "at":<ms>}, ...],
-  //                "teamScore":<number>,"openPrs":[{repo, number, title, actor}, ...]}
+  //                "openPrs":[{repo, number, title, actor}, ...],
+  //                "mvp":{"name":<string>,"count":<number>}|null}
   //               feed is oldest first and holds the last 24h, each entry stamped with
   //               the server time it happened; openPrs is the current set of open PRs
   //               (state, so no 24h expiry) — what's in flight now, each with the
-  //               GitHub login of its author.
+  //               GitHub login of its author; mvp is today's leading Actor, null until
+  //               today has an event.
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title, actor}
   //               actor is the GitHub login of whoever did it (the merger for a
   //               pr-merged, the reviewer for a review, the commenter for a comment),
@@ -251,15 +257,15 @@ export async function startServer(port: number, options: Options = {}) {
   const snapshot = () => ({
     type: "snapshot",
     feed: currentFeed(),
-    teamScore: teamScore(),
     openPrs,
+    mvp: todaysMvp(),
   });
   wss.on("connection", (socket) => socket.send(JSON.stringify(snapshot())));
 
   /**
    * Backfill: rebuild the Feed from the GitHub API so a fresh boot is never blank and
    * downtime leaves no gap. Fetches back to the start of the week (not just the Feed's
-   * 24h) because the Team Score is rebuilt from the week's Celebration Events.
+   * 24h) so the dedup set knows every event a webhook might redeliver from this week.
    * Any failure is logged and skipped — live webhooks still work without it.
    */
   async function backfill() {
@@ -327,9 +333,9 @@ export async function startServer(port: number, options: Options = {}) {
             },
           });
       }
-      // Approvals are Celebration Events, so the Team Score only survives a restart
-      // if this week's are refetched too. One request per PR touched this week; a
-      // repo that refuses the read loses its approvals, not the whole Backfill.
+      // Approvals are Celebration Events, so a restart mid-morning has to refetch them
+      // or they vanish from the Feed and today's MVP. One request per PR touched this
+      // week; a repo that refuses the read loses its approvals, not the whole Backfill.
       for (const pr of active) {
         let reviews: any[];
         try {
@@ -396,22 +402,22 @@ export async function startServer(port: number, options: Options = {}) {
     } else if (!trackedRepos.includes(event.repo)) {
       console.log(`webhook ${delivery}: untracked repo ${event.repo}`);
     } else {
-      const earned = recordEvent(event);
+      const recorded = recordEvent(event);
       console.log(
-        `webhook ${delivery}: ${earned === null ? "repeat, dropped" : `recorded (+${earned})`} ${event.type} ${event.repo}#${event.number}`,
+        `webhook ${delivery}: ${recorded ? "recorded" : "repeat, dropped"} ${event.type} ${event.repo}#${event.number}`,
       );
       // null = repeat of something already recorded (e.g. Backfill got there
       // first): no state change, so nothing to tell the displays.
-      if (earned !== null) {
+      if (recorded) {
         broadcast(
           CELEBRATIONS.has(event.type)
             ? { ...event, audible: soundAllowed() }
             : event,
         );
-        // A Celebration Event moved the Team Score, and an open/merged/closed moved the
-        // in-flight list: follow either with a fresh snapshot rather than inventing a
-        // second message shape for state the snapshot already carries.
-        if (earned || IN_FLIGHT_CHANGES.has(event.type)) broadcast(snapshot());
+        // Any event can change today's MVP (and an open/merged/closed also moves the
+        // in-flight list), so follow every recorded one with a fresh snapshot rather
+        // than inventing a second message shape for state the snapshot already carries.
+        broadcast(snapshot());
       }
     }
     res.sendStatus(204);
@@ -430,12 +436,16 @@ export async function startServer(port: number, options: Options = {}) {
   // clock (and a Pi whose time jumps after an NTP sync) is followed rather than trusted.
   // `fired` keeps a chime to one per minute however many ticks land inside it.
   let fired = "";
+  let mvpDay = startOfDay(now());
   const scheduler = setInterval(() => {
     const at = new Date(now());
-    // The Team Score resets on read, so a display connected across Monday 00:00 would
-    // keep last week's number until something else happened. `snapshot()` reads (and
-    // so rolls) the week, which is why this fires once rather than every tick.
-    if (startOfWeek(at.getTime()) !== scoreWeek) broadcast(snapshot());
+    // The MVP is derived on read, so a display connected across local midnight would
+    // keep yesterday's leader until something else happened. Remembering the day we
+    // last pushed is what keeps this to one broadcast rather than one per tick.
+    if (startOfDay(at.getTime()) !== mvpDay) {
+      mvpDay = startOfDay(at.getTime());
+      broadcast(snapshot());
+    }
     const hhmm = `${at.getHours()}`.padStart(2, "0") + ":" + `${at.getMinutes()}`.padStart(2, "0");
     const minute = `${at.toDateString()} ${hhmm}`;
     if (fired === minute || !isWeekday(at) || !chimes.includes(hhmm)) return;

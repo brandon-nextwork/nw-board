@@ -4,10 +4,6 @@
     "example-org/features",
     "example-org/content"
   ],
-  "points": {
-    "pr-merged": 70,
-    "review-approved": 9
-  },
   "quietHours": {
     "soundStart": "09:00",
     "soundEnd": "18:00"

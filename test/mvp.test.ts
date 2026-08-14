@@ -1,0 +1,154 @@
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterEach, expect, test } from "vitest";
+import { startServer } from "../src/server.ts";
+import {
+  badConfigPath,
+  configPath,
+  connectedDisplay,
+  fixture,
+  postWebhook,
+  readSnapshot,
+} from "./helpers.ts";
+
+const merged = fixture("pull-request-merged.json"); // hubot merged projects-app#42
+const review = fixture("pull-request-review.json"); // reviewer-rita on features#7
+const comment = fixture("issue-comment.json"); // commenter-carl on content#13
+const opened = JSON.stringify({
+  ...JSON.parse(merged),
+  action: "opened",
+  pull_request: { ...JSON.parse(merged).pull_request, merged: false },
+});
+const changesRequested = JSON.stringify({
+  ...JSON.parse(review),
+  review: { state: "changes_requested", user: { login: "reviewer-rita" } },
+});
+
+const start = (now?: () => number) => startServer(0, { configPath, now });
+
+let running: { port: number; close: () => Promise<void> } | undefined;
+afterEach(async () => {
+  await running?.close();
+  running = undefined;
+});
+
+test("today's MVP is the Actor with the most tracked events, whatever their type", async () => {
+  running = await start();
+
+  await postWebhook(running.port, { body: comment, event: "issue_comment" });
+  await postWebhook(running.port, { body: comment, event: "issue_comment" });
+  await postWebhook(running.port, { body: review, event: "pull_request_review" });
+  await postWebhook(running.port, { body: changesRequested, event: "pull_request_review" });
+  await postWebhook(running.port, { body: changesRequested, event: "pull_request_review" });
+  await postWebhook(running.port, { body: merged });
+  await postWebhook(running.port, { body: merged }); // repeat: dropped, counts once
+
+  // Rita: one approval and two changes-requested. Carl: two comments. Hubot: one merge.
+  expect((await readSnapshot(running.port)).mvp).toEqual({
+    name: "reviewer-rita",
+    count: 3,
+  });
+});
+
+test("events from before local midnight do not count toward today's MVP", async () => {
+  let clock = new Date(2026, 7, 13, 23, 0, 0).getTime(); // Thursday, late
+  running = await start(() => clock);
+
+  await postWebhook(running.port, { body: merged }); // hubot, yesterday
+  clock = new Date(2026, 7, 14, 9, 30, 0).getTime(); // Friday morning
+  await postWebhook(running.port, { body: comment, event: "issue_comment" });
+
+  // Yesterday's merge is still inside the 24h Feed, but the MVP only counts today.
+  expect((await readSnapshot(running.port)).mvp).toEqual({
+    name: "commenter-carl",
+    count: 1,
+  });
+});
+
+test("a day with no tracked events has no MVP", async () => {
+  running = await start();
+
+  expect((await readSnapshot(running.port)).mvp).toBe(null);
+});
+
+test("a tie for today's MVP keeps whoever reached the count first", async () => {
+  running = await start();
+
+  await postWebhook(running.port, { body: merged }); // hubot
+  await postWebhook(running.port, { body: comment, event: "issue_comment" }); // carl
+
+  expect((await readSnapshot(running.port)).mvp).toEqual({ name: "hubot", count: 1 });
+});
+
+test.for([
+  ["a Celebration Event", { body: merged }, { name: "hubot", count: 1 }],
+  [
+    "an Ambient Event",
+    { body: comment, event: "issue_comment" },
+    { name: "commenter-carl", count: 1 },
+  ],
+])("%s delivery carries the updated MVP to a connected display", async ([, options, mvp]) => {
+  running = await start();
+  const { ws, messages } = await connectedDisplay(running.port);
+
+  await postWebhook(running.port, options as any);
+  await sleep(50);
+  ws.close();
+
+  // The MVP after the delivery, without the display having to reconnect.
+  expect(messages.at(-1).mvp).toEqual(mvp);
+});
+
+test("a display left connected across local midnight is pushed the reset MVP", async () => {
+  let clock = new Date(2026, 7, 13, 23, 30, 0).getTime(); // Thursday, late
+  running = await startServer(0, { configPath, now: () => clock, tickMs: 10 });
+  await postWebhook(running.port, { body: merged });
+  const { ws, messages } = await connectedDisplay(running.port);
+
+  clock = new Date(2026, 7, 14, 0, 30, 0).getTime(); // just past midnight
+  await sleep(100);
+  ws.close();
+
+  const snapshots = messages.filter((m) => m.type === "snapshot");
+  // The snapshot sent on connect, then exactly one for the day rolling over —
+  // not one per tick.
+  expect(snapshots.map((s) => s.mvp)).toEqual([{ name: "hubot", count: 1 }, null]);
+});
+
+test("the MVP is named by the config names map, not the raw login", async () => {
+  running = await startServer(0, { configPath: badConfigPath("config-with-names.json") });
+
+  await postWebhook(running.port, { body: merged }); // merged_by hubot -> "Botty"
+  await postWebhook(running.port, { body: review, event: "pull_request_review" });
+
+  // Botty and Rita are tied on one event each; Botty got there first.
+  expect((await readSnapshot(running.port)).mvp).toEqual({ name: "Botty", count: 1 });
+});
+
+test("a freshly opened PR appears at the head of the In Flight list, not buried at the tail", async () => {
+  running = await start();
+
+  await postWebhook(running.port, { body: opened }); // #42
+  const newest = JSON.stringify({
+    ...JSON.parse(merged),
+    action: "opened",
+    pull_request: { ...JSON.parse(merged).pull_request, number: 77, title: "Newest work", merged: false },
+  });
+  await postWebhook(running.port, { body: newest });
+
+  const snapshot = await readSnapshot(running.port);
+  expect(snapshot.openPrs.map((pr: any) => pr.number)).toEqual([77, 42]);
+});
+
+test("the board shows a team member's first name from the config names map, and the raw login when unmapped", async () => {
+  const named = badConfigPath("config-with-names.json");
+  running = await startServer(0, { configPath: named });
+
+  await postWebhook(running.port, { body: merged }); // merged_by hubot -> "Botty"
+  await postWebhook(running.port, { body: comment, event: "issue_comment" }); // commenter-carl unmapped
+
+  const snapshot = await readSnapshot(running.port);
+  expect(snapshot.feed.map((e: any) => [e.type, e.actor])).toEqual([
+    ["pr-merged", "Botty"],
+    ["pr-comment", "commenter-carl"],
+  ]);
+});
