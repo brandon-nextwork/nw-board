@@ -4,10 +4,6 @@
     "nextworkengineering/features",
     "nextworkengineering/content"
   ],
-  "points": {
-    "pr-merged": 100,
-    "review-approved": 25
-  },
   "quietHours": {
     "soundStart": "09:00",
     "soundEnd": "18:00"

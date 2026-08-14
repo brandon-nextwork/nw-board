@@ -286,7 +286,7 @@ function panel(x, y, width, height, title, titleColor) {
 }
 
 // --------------------------------------------------------------------------------
-// Marquee: the Team Score, above everything, with chasing bulbs.
+// Marquee: Today's MVP, above everything, with chasing bulbs.
 // --------------------------------------------------------------------------------
 
 const marquee = new Container();
@@ -309,15 +309,21 @@ const insertCoin = label("INSERT PULL REQUEST", 20, C.dim);
 insertCoin.position.set(52, 118);
 marquee.addChild(insertCoin);
 
-const scoreCaption = label("TEAM SCORE", 26, C.ink);
-scoreCaption.anchor.set(1, 0);
-scoreCaption.position.set(1824, 24);
-marquee.addChild(scoreCaption);
+const mvpCaption = label("TODAY'S MVP", 26, C.ink);
+mvpCaption.anchor.set(1, 0);
+mvpCaption.position.set(1824, 24);
+marquee.addChild(mvpCaption);
 
-const scoreDisplay = label("000000", 92, C.amber);
-scoreDisplay.anchor.set(1, 0);
-scoreDisplay.position.set(1824, 54);
-marquee.addChild(scoreDisplay);
+// The name is right-anchored so it grows leftwards; the tally sits under its tail.
+const mvpName = label("UP FOR GRABS", 92, C.dim);
+mvpName.anchor.set(1, 0);
+mvpName.position.set(1824, 54);
+marquee.addChild(mvpName);
+
+const mvpTally = label("", 28, C.dim);
+mvpTally.anchor.set(1, 1);
+mvpTally.position.set(1824, 158);
+marquee.addChild(mvpTally);
 
 const bulbs = Array.from({ length: 44 }, (_, i) => {
   const bulb = new Sprite(pixelTexture("star"));
@@ -508,21 +514,22 @@ app.ticker.add((t) => {
   if (tickerContent.x <= -tickerLoop) tickerContent.x += tickerLoop;
 });
 
-// Team Score marquee tick-up: the display counts toward the real score instead of
-// snapping, which is the whole point of a score display.
-let scoreShown = 0;
-let scoreTarget = 0;
-let scoreClock = 0;
-function setScore(value) {
-  scoreTarget = value;
-  // A weekly reset drops the score; counting down looks broken, so snap instead.
-  if (value < scoreShown) {
-    scoreShown = value;
-    drawScore();
-  }
-}
-function drawScore() {
-  scoreDisplay.text = String(scoreShown).padStart(6, "0");
+// Today's MVP on the marquee. A lead change is an event in its own right, so the name
+// flashes white and pulses the way the score used to when it moved.
+const FLASH_MS = 500;
+let flashLeft = 0;
+let mvpFill = C.dim;
+function setMvp(mvp) {
+  // First name only: the board has one line of marquee, not a full name.
+  const name = mvp ? String(mvp.name).split(" ")[0] : "UP FOR GRABS";
+  const changed = name !== mvpName.text;
+  mvpName.text = name;
+  mvpTally.text = mvp ? `×${mvp.count}` : "";
+  mvpFill = mvp ? C.amber : C.dim;
+  // Right-align the pair: the tally hangs off the end of the name.
+  mvpName.position.x = 1824 - (mvp ? Math.ceil(mvpTally.width) + 14 : 0);
+  if (changed) flashLeft = FLASH_MS;
+  mvpName.style.fill = changed ? C.white : mvpFill;
 }
 
 // --------------------------------------------------------------------------------
@@ -966,7 +973,7 @@ function chime(at = "") {
 }
 
 // --------------------------------------------------------------------------------
-// The heartbeat: bulbs, roll band, blinking prompt, score tick-up. One ticker for
+// The heartbeat: bulbs, roll band, blinking prompt, MVP flash. One ticker for
 // the whole client — scenes add and remove their own callbacks on this same ticker.
 // --------------------------------------------------------------------------------
 
@@ -979,31 +986,24 @@ app.ticker.add((ticker) => {
   rollBand.y = ((rollBand.y + ticker.deltaTime * 1.6) % (H + 200)) - 100;
   insertCoin.alpha = Math.floor(phase / 600) % 2 ? 0.25 : 1;
 
-  // Count toward the real score in steps rather than re-rasterising the digits every
-  // frame; ~25 updates is enough to read as a tick-up.
-  if (scoreShown !== scoreTarget) {
-    scoreClock += ticker.deltaMS;
-    if (scoreClock >= 40) {
-      scoreClock = 0;
-      scoreShown = Math.min(
-        scoreTarget,
-        scoreShown + Math.max(1, Math.ceil((scoreTarget - scoreShown) / 12)),
-      );
-      drawScore();
-      scoreDisplay.scale.set(1.12);
-      scoreDisplay.style.fill = C.white;
+  // Lead-change juice: scale decays every frame (cheap), but the fill is set twice —
+  // re-rasterising 92px text every frame is not something the Pi needs to do.
+  if (flashLeft > 0) {
+    flashLeft -= ticker.deltaMS;
+    mvpName.scale.set(1 + 0.12 * Math.max(0, flashLeft / FLASH_MS));
+    if (flashLeft <= 0) {
+      mvpName.scale.set(1);
+      mvpName.style.fill = mvpFill;
     }
-  } else if (scoreDisplay.scale.x !== 1) {
-    scoreDisplay.scale.set(1);
-    scoreDisplay.style.fill = C.amber;
   }
 });
 
 // --------------------------------------------------------------------------------
 // Display protocol (server -> client only):
-//   {type:"snapshot", feed:[{<domain event>, at}], teamScore,
-//    openPrs:[{repo,number,title,actor}]}  (openPrs.actor is the PR's author)
-//   on connect and whenever the score or the in-flight list moves, then bare domain
+//   {type:"snapshot", feed:[{<domain event>, at}],
+//    openPrs:[{repo,number,title,actor}],       (openPrs.actor is the PR's author)
+//    mvp:{name,count}|null}                     (today's leading Actor, null if none)
+//   on connect and after every recorded event, then bare domain
 //   events {type, repo, number, title, actor}; actor is the GitHub login of whoever
 //   did it (merger, reviewer, commenter), always a string and "" when GitHub named
 //   nobody. Celebration Events carry audible:true|false (Quiet Hours), and
@@ -1017,7 +1017,7 @@ function handleMessage(data) {
   }
   if (data.type === "snapshot") {
     feed = data.feed.map(stamp);
-    setScore(data.teamScore);
+    setMvp(data.mvp);
     renderFlight(data.openPrs);
   } else {
     feed.push(stamp(data));
@@ -1055,7 +1055,7 @@ renderFlight([]);
 //   arcade.event({type:"pr-merged", repo:"a/b", number:7, title:"x", audible:true})
 //   arcade.celebrate("review-approved") / arcade.ambient("pr-comment") / arcade.chime("09:00")
 //   arcade.play("pr-merged")           — sound only
-//   arcade.setScore(1234)              — marquee tick-up
+//   arcade.setMvp({name:"Maximus",count:12}) / arcade.setMvp(null) — marquee MVP
 const sample = (type) => ({
   type,
   repo: "nextworkengineering/demo",
@@ -1069,13 +1069,13 @@ window.arcade = {
   ambient,
   chime,
   play,
-  setScore,
+  setMvp,
   event: handleMessage,
   demo() {
     ["pr-opened", "pr-comment", "changes-requested", "pr-closed"].forEach((type, i) =>
       setTimeout(() => ambient(type), i * 1600),
     );
-    setTimeout(() => setScore(scoreTarget + 125), 6400);
+    setTimeout(() => setMvp({ name: "Maximus", count: 12 }), 6400);
     setTimeout(() => window.arcade.celebrate("pr-merged"), 6600);
     setTimeout(() => window.arcade.celebrate("review-approved"), 6800);
     setTimeout(() => chime("09:00"), 13_000);

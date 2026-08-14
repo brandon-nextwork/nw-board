@@ -9,9 +9,5 @@
   "chimes": [
     "09:00",
     "17:00"
-  ],
-  "points": {
-    "pr-merged": 70,
-    "review-approved": 9
-  }
+  ]
 }

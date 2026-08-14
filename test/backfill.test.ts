@@ -172,7 +172,7 @@ test("a webhook for a PR that Backfill already recorded does not duplicate the F
   ]);
 });
 
-test("a redelivered webhook for a merge Backfill recorded more than 24 hours ago scores once", async () => {
+test("a redelivered webhook for a merge Backfill recorded more than 24 hours ago is dropped", async () => {
   const api = await stubGitHubApi(
     onlyProjectsApp(
       [],
@@ -188,17 +188,20 @@ test("a redelivered webhook for a merge Backfill recorded more than 24 hours ago
   );
   running = await start(api.base);
 
-  // Reading a snapshot expires the Backfilled merge out of the 24h Feed; the merge
-  // still counts towards this week's Team Score, so a redelivery must not re-score it.
+  // The Backfilled merge is three days old, so it is already outside the 24h Feed;
+  // the dedup set outlives the Feed by a week, so the redelivery must not re-record it
+  // (which would stamp a three-day-old merge as happening now).
   const backfilled = await connectAndReadSnapshot(running!.port);
   const { ws, messages } = await connectedDisplay(running!.port);
   await postWebhook(running!.port);
   await sleep(50);
   ws.close();
 
-  expect(backfilled.teamScore).toBe(70);
+  expect(backfilled.feed).toEqual([]);
   expect(messages.filter((m) => m.type !== "snapshot")).toEqual([]);
-  expect((await connectAndReadSnapshot(running!.port)).teamScore).toBe(70);
+  const after = await connectAndReadSnapshot(running!.port);
+  expect(after.feed).toEqual([]);
+  expect(after.mvp).toBe(null);
 });
 
 test("Backfilled events older than 24 hours are kept out of the Feed snapshot", async () => {
@@ -256,13 +259,13 @@ test("Backfilled events older than 24 hours are kept out of the Feed snapshot", 
   ]);
 });
 
-test("Backfill rebuilds this week's review approvals into the Team Score", async () => {
+test("a review approval Backfilled from earlier today counts toward the MVP", async () => {
   const DAY = 24 * HOUR;
   const api = await stubGitHubApi((url) => {
     if (!url.includes("/nextworkengineering/projects-app/")) return [];
     if (url.includes("/pulls/7/reviews"))
       return [
-        // Last week's approval: already scored in a week that has ended.
+        // Last week's approval: too old for both the Feed and today's MVP.
         {
           state: "APPROVED",
           submitted_at: ago(10 * DAY),
@@ -286,7 +289,8 @@ test("Backfill rebuilds this week's review approvals into the Team Score", async
           title: "Wire up the Feed",
           created_at: ago(3 * HOUR),
           updated_at: ago(HOUR),
-          user: { login: "author-alice" },
+          // Rita opened it too, so her count only reaches 2 if the approval counts.
+          user: { login: "reviewer-rita" },
         },
       ];
     return [];
@@ -295,14 +299,14 @@ test("Backfill rebuilds this week's review approvals into the Team Score", async
   running = await start(api.base);
 
   const snapshot = await connectAndReadSnapshot(running!.port);
-  expect(snapshot.teamScore).toBe(9);
+  expect(snapshot.mvp).toEqual({ name: "reviewer-rita", count: 2 });
   expect(snapshot.feed).toEqual([
     {
       type: "pr-opened",
       repo: "nextworkengineering/projects-app",
       number: 7,
       title: "Wire up the Feed",
-      actor: "author-alice",
+      actor: "reviewer-rita",
       at: NOW - 3 * HOUR,
     },
     {
