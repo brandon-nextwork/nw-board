@@ -8,6 +8,26 @@
     "pr-merged": 100,
     "review-approved": 25
   },
-  "quietHours": { "soundStart": "09:00", "soundEnd": "18:00" },
-  "chimes": ["09:00", "17:00"]
+  "quietHours": {
+    "soundStart": "09:00",
+    "soundEnd": "18:00"
+  },
+  "chimes": [
+    "09:00",
+    "17:00"
+  ],
+  "names": {
+    "brandon-nextwork": "Brandon",
+    "krishnaKapadia": "Krishna",
+    "josephambe": "Amber",
+    "natashaongiscoding": "Natasha",
+    "rita-nextwrk": "Rita",
+    "william-nextwork": "William",
+    "pano-skylakis": "Pano",
+    "loheth-nextwork": "Loheth",
+    "jamal-nextwork": "Jamal",
+    "maya-nextwork": "Maya",
+    "jonnext": "Jon",
+    "minimus7": "Maximus"
+  }
 }

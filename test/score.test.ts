@@ -171,3 +171,17 @@ test("a freshly opened PR appears at the head of the In Flight list, not buried 
   const snapshot = await readSnapshot(running.port);
   expect(snapshot.openPrs.map((pr: any) => pr.number)).toEqual([77, 42]);
 });
+
+test("the board shows a team member's first name from the config names map, and the raw login when unmapped", async () => {
+  const named = badConfigPath("config-with-names.json");
+  running = await startServer(0, { configPath: named });
+
+  await postWebhook(running.port, { body: merged }); // merged_by hubot -> "Botty"
+  await postWebhook(running.port, { body: comment, event: "issue_comment" }); // commenter-carl unmapped
+
+  const snapshot = await readSnapshot(running.port);
+  expect(snapshot.feed.map((e: any) => [e.type, e.actor])).toEqual([
+    ["pr-merged", "Botty"],
+    ["pr-comment", "commenter-carl"],
+  ]);
+});

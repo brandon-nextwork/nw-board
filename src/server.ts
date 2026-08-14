@@ -122,6 +122,13 @@ export async function startServer(port: number, options: Options = {}) {
     if (typeof points[type] !== "number")
       throw new Error(`${configPath}: points.${type} must be a number`);
 
+  // Team member names: GitHub login -> first name shown on the board. Optional;
+  // an unmapped login displays as-is, so absence is a cosmetic gap, not an error.
+  const names: Record<string, string> = config.names ?? {};
+  for (const [key, value] of Object.entries(names))
+    if (typeof value !== "string")
+      throw new Error(`${configPath}: names.${key} must be a string`);
+
   // Quiet Hours: sound is allowed on weekdays between these two local times only.
   const quietHours = `${configPath}: quietHours must be {"soundStart":"HH:MM","soundEnd":"HH:MM"}`;
   const soundStart = minutesOfDay(config.quietHours?.soundStart, quietHours);
@@ -193,6 +200,9 @@ export async function startServer(port: number, options: Options = {}) {
     // would sit in the Feed forever: the expiry loop stops at the first entry it
     // cannot age out. Undateable is unshowable, so drop it.
     if (!Number.isFinite(at)) return null;
+    // Display names live here, the one path into state: mutating the caller's
+    // event on purpose so the broadcast that follows carries the name too.
+    event.actor = names[event.actor] ?? event.actor;
     teamScore(); // roll the week over before deduping or crediting
     const key = `${event.type}/${event.repo}/${event.number}`;
     if (BACKFILLED.has(event.type)) {
