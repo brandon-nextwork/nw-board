@@ -309,15 +309,15 @@ const insertCoin = label("INSERT PULL REQUEST", 20, C.dim);
 insertCoin.position.set(52, 118);
 marquee.addChild(insertCoin);
 
-const mvpCaption = label("TODAY'S MVP", 26, C.ink);
+const mvpCaption = label("TODAY'S MVP", 34, C.ink);
 mvpCaption.anchor.set(1, 0);
-mvpCaption.position.set(1824, 24);
+mvpCaption.position.set(1824, 26);
 marquee.addChild(mvpCaption);
 
 // The name is right-anchored so it grows leftwards; the tally sits under its tail.
-const mvpName = label("UP FOR GRABS", 92, C.dim);
+const mvpName = label("ANYONE'S GAME", 64, C.dim);
 mvpName.anchor.set(1, 0);
-mvpName.position.set(1824, 54);
+mvpName.position.set(1824, 72);
 marquee.addChild(mvpName);
 
 const mvpTally = label("", 28, C.dim);
@@ -521,7 +521,7 @@ let flashLeft = 0;
 let mvpFill = C.dim;
 function setMvp(mvp) {
   // First name only: the board has one line of marquee, not a full name.
-  const name = mvp ? String(mvp.name).split(" ")[0] : "UP FOR GRABS";
+  const name = mvp ? String(mvp.name).split(" ")[0] : "ANYONE'S GAME";
   const changed = name !== mvpName.text;
   mvpName.text = name;
   mvpTally.text = mvp ? `×${mvp.count}` : "";

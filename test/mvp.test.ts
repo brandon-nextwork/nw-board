@@ -31,21 +31,33 @@ afterEach(async () => {
   running = undefined;
 });
 
-test("today's MVP is the Actor with the most tracked events, whatever their type", async () => {
+// Merges by other actors, built from the merged fixture.
+const mergeBy = (number: number, login: string) =>
+  JSON.stringify({
+    ...JSON.parse(merged),
+    pull_request: {
+      ...JSON.parse(merged).pull_request,
+      number,
+      merged_by: { login },
+    },
+  });
+
+test("today's MVP is the Actor with the most PR merges — other event types don't count", async () => {
   running = await start();
 
+  // Rita racks up reviews, Carl comments twice; none of it counts.
   await postWebhook(running.port, { body: comment, event: "issue_comment" });
   await postWebhook(running.port, { body: comment, event: "issue_comment" });
   await postWebhook(running.port, { body: review, event: "pull_request_review" });
   await postWebhook(running.port, { body: changesRequested, event: "pull_request_review" });
-  await postWebhook(running.port, { body: changesRequested, event: "pull_request_review" });
-  await postWebhook(running.port, { body: merged });
+  await postWebhook(running.port, { body: merged }); // hubot
   await postWebhook(running.port, { body: merged }); // repeat: dropped, counts once
+  await postWebhook(running.port, { body: mergeBy(43, "hubot") });
+  await postWebhook(running.port, { body: mergeBy(44, "octocat") });
 
-  // Rita: one approval and two changes-requested. Carl: two comments. Hubot: one merge.
   expect((await readSnapshot(running.port)).mvp).toEqual({
-    name: "reviewer-rita",
-    count: 3,
+    name: "hubot",
+    count: 2,
   });
 });
 
@@ -55,18 +67,21 @@ test("events from before local midnight do not count toward today's MVP", async 
 
   await postWebhook(running.port, { body: merged }); // hubot, yesterday
   clock = new Date(2026, 7, 14, 9, 30, 0).getTime(); // Friday morning
-  await postWebhook(running.port, { body: comment, event: "issue_comment" });
+  await postWebhook(running.port, { body: mergeBy(43, "octocat") });
 
   // Yesterday's merge is still inside the 24h Feed, but the MVP only counts today.
   expect((await readSnapshot(running.port)).mvp).toEqual({
-    name: "commenter-carl",
+    name: "octocat",
     count: 1,
   });
 });
 
-test("a day with no tracked events has no MVP", async () => {
+test("a day with no merges has no MVP, however busy it was otherwise", async () => {
   running = await start();
+  expect((await readSnapshot(running.port)).mvp).toBe(null);
 
+  await postWebhook(running.port, { body: comment, event: "issue_comment" });
+  await postWebhook(running.port, { body: review, event: "pull_request_review" });
   expect((await readSnapshot(running.port)).mvp).toBe(null);
 });
 
@@ -74,18 +89,14 @@ test("a tie for today's MVP keeps whoever reached the count first", async () => 
   running = await start();
 
   await postWebhook(running.port, { body: merged }); // hubot
-  await postWebhook(running.port, { body: comment, event: "issue_comment" }); // carl
+  await postWebhook(running.port, { body: mergeBy(44, "octocat") });
 
   expect((await readSnapshot(running.port)).mvp).toEqual({ name: "hubot", count: 1 });
 });
 
 test.for([
   ["a Celebration Event", { body: merged }, { name: "hubot", count: 1 }],
-  [
-    "an Ambient Event",
-    { body: comment, event: "issue_comment" },
-    { name: "commenter-carl", count: 1 },
-  ],
+  ["an Ambient Event", { body: comment, event: "issue_comment" }, null],
 ])("%s delivery carries the updated MVP to a connected display", async ([, options, mvp]) => {
   running = await start();
   const { ws, messages } = await connectedDisplay(running.port);
@@ -118,9 +129,7 @@ test("the MVP is named by the config names map, not the raw login", async () => 
   running = await startServer(0, { configPath: badConfigPath("config-with-names.json") });
 
   await postWebhook(running.port, { body: merged }); // merged_by hubot -> "Botty"
-  await postWebhook(running.port, { body: review, event: "pull_request_review" });
 
-  // Botty and Rita are tied on one event each; Botty got there first.
   expect((await readSnapshot(running.port)).mvp).toEqual({ name: "Botty", count: 1 });
 });
 

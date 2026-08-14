@@ -176,7 +176,7 @@ export async function startServer(port: number, options: Options = {}) {
     seen.clear();
   };
 
-  // Today's MVP: the Actor with the most tracked events since local midnight. Derived
+  // Today's MVP: the Actor with the most PR merges since local midnight. Derived
   // from the Feed on read — its 24h window always contains today — so the midnight
   // reset needs no state and no timer. Ties keep whoever reached the count first
   // (Map insertion order plus a strict >).
@@ -184,8 +184,8 @@ export async function startServer(port: number, options: Options = {}) {
     const midnight = startOfDay(now());
     const counts = new Map<string, number>();
     for (const { at, event } of feed)
-      // GitHub named nobody: "" is not an Actor and cannot be an MVP.
-      if (at >= midnight && event.actor)
+      // Only merges count toward the crown; "" (GitHub named nobody) can't wear it.
+      if (at >= midnight && event.type === "pr-merged" && event.actor)
         counts.set(event.actor, (counts.get(event.actor) ?? 0) + 1);
     let mvp: { name: string; count: number } | null = null;
     for (const [name, count] of counts)

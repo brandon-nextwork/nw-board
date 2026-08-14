@@ -259,7 +259,7 @@ test("Backfilled events older than 24 hours are kept out of the Feed snapshot", 
   ]);
 });
 
-test("a review approval Backfilled from earlier today counts toward the MVP", async () => {
+test("Backfilled approvals reach the Feed, but reviews alone make no MVP", async () => {
   const DAY = 24 * HOUR;
   const api = await stubGitHubApi((url) => {
     if (!url.includes("/example-org/projects-app/")) return [];
@@ -299,7 +299,8 @@ test("a review approval Backfilled from earlier today counts toward the MVP", as
   running = await start(api.base);
 
   const snapshot = await connectAndReadSnapshot(running!.port);
-  expect(snapshot.mvp).toEqual({ name: "reviewer-rita", count: 2 });
+  // Rita opened and approved today, but the crown is merges-only.
+  expect(snapshot.mvp).toBe(null);
   expect(snapshot.feed).toEqual([
     {
       type: "pr-opened",
@@ -399,4 +400,26 @@ test("a Tracked Repo the token cannot read loses only its own history, not the w
       at: NOW - 2 * HOUR,
     },
   ]);
+});
+
+test("a merge Backfilled from earlier today counts toward the MVP", async () => {
+  const api = await stubGitHubApi((url) => {
+    if (url.includes("state=closed") && url.includes("/projects-app/"))
+      return [
+        {
+          number: 9,
+          title: "Ship the ticker",
+          user: { login: "merge-mike" },
+          updated_at: ago(2 * HOUR),
+          merged_at: ago(2 * HOUR),
+        },
+      ];
+    return [];
+  });
+  running = await start(api.base);
+
+  expect((await connectAndReadSnapshot(running!.port)).mvp).toEqual({
+    name: "merge-mike",
+    count: 1,
+  });
 });
