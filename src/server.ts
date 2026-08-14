@@ -367,8 +367,20 @@ export async function startServer(port: number, options: Options = {}) {
 
     const payload = JSON.parse(req.body.toString("utf8"));
     const event = toDomainEvent(req.header("x-github-event"), payload);
-    if (event && trackedRepos.includes(event.repo)) {
+    // One line per accepted delivery saying what became of it — a 204 has four
+    // different meanings, and debugging a live miss on the Pi needs to see which.
+    const delivery = req.header("x-github-delivery") ?? "?";
+    if (!event) {
+      console.log(
+        `webhook ${delivery}: ignored ${req.header("x-github-event")}/${payload.action ?? "?"}`,
+      );
+    } else if (!trackedRepos.includes(event.repo)) {
+      console.log(`webhook ${delivery}: untracked repo ${event.repo}`);
+    } else {
       const earned = recordEvent(event);
+      console.log(
+        `webhook ${delivery}: ${earned === null ? "repeat, dropped" : `recorded (+${earned})`} ${event.type} ${event.repo}#${event.number}`,
+      );
       // null = repeat of something already recorded (e.g. Backfill got there
       // first): no state change, so nothing to tell the displays.
       if (earned !== null) {
