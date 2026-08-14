@@ -430,6 +430,18 @@ const bulbs = Array.from({ length: 44 }, (_, i) => {
 
 const FEED_ROWS = 12;
 const feedPanel = panel(24, 204, 1872, 756, "LIVE FEED // LAST 24H", C.ink);
+
+// Wall clock on the feed header — the board doubles as the office clock.
+const wallClock = label("", 30, C.ink);
+wallClock.anchor.set(1, 0);
+wallClock.position.set(1852, 12);
+feedPanel.addChild(wallClock);
+setInterval(() => {
+  const t = new Date()
+    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    .toUpperCase();
+  if (wallClock.text !== t) wallClock.text = t;
+}, 1000);
 const feedEmpty = label("...WAITING FOR PLAYERS...", 26, C.dim);
 feedEmpty.position.set(24, 90);
 feedPanel.addChild(feedEmpty);
