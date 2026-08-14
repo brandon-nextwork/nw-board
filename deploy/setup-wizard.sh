@@ -424,16 +424,21 @@ else
   SECRET_IS_NEW=yes
   ok "generated a new webhook secret (openssl rand -hex 32)"
 fi
-say ""
-say "Now a fine-grained PAT, so the display can Backfill open PRs on boot:"
-open_url "https://github.com/settings/personal-access-tokens/new"
-step "Resource owner: example-org"
-step "Repository access: Only select repositories → projects-app, features, content"
-step "Repository permissions → Metadata: Read-only (it's mandatory)"
-step "Repository permissions → Pull requests: Read-only"
-step "Repository permissions → Issues: Read-only  (PR comments are issue comments)"
-step "Generate token, then copy it."
-ask_secret GITHUB_TOKEN "Paste the token (input hidden, Enter to skip for now):"
+if [[ -n "$(_existing GITHUB_TOKEN || true)" ]]; then
+  say ""
+  ok "a GITHUB_TOKEN is already configured — just press Enter to keep it"
+else
+  say ""
+  say "Now a fine-grained PAT, so the display can Backfill open PRs on boot:"
+  open_url "https://github.com/settings/personal-access-tokens/new"
+  step "Resource owner: example-org"
+  step "Repository access: Only select repositories → projects-app, features, content"
+  step "Repository permissions → Metadata: Read-only (it's mandatory)"
+  step "Repository permissions → Pull requests: Read-only"
+  step "Repository permissions → Issues: Read-only  (PR comments are issue comments)"
+  step "Generate token, then copy it."
+fi
+ask_secret GITHUB_TOKEN "Paste a token (input hidden; Enter keeps current / skips):"
 write_env PORT "$PORT"
 write_env GITHUB_WEBHOOK_SECRET "$WEBHOOK_SECRET"
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
