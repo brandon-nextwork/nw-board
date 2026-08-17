@@ -438,7 +438,7 @@ wallClock.position.set(1852, 12);
 feedPanel.addChild(wallClock);
 setInterval(() => {
   const t = new Date()
-    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })
     .toUpperCase();
   if (wallClock.text !== t) wallClock.text = t;
 }, 1000);
