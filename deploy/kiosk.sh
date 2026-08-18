@@ -47,7 +47,16 @@ if command -v xset >/dev/null 2>&1; then
   xset s off -dpms s noblank || true
 fi
 
-# Hide the mouse pointer. Dies with the service (same cgroup).
+# Hide the mouse pointer. The page already asks for none (CSS cursor:none), but
+# the arrow Chromium shows while the page is still loading comes from the cursor
+# theme — and under Wayland unclutter can't touch it. deploy/blank-cursor is a
+# theme whose every cursor is one transparent pixel; both libwayland-cursor and
+# libXcursor read these env vars, so no session type ever draws an arrow.
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export XCURSOR_THEME=blank-cursor
+export XCURSOR_PATH="$DEPLOY_DIR:/usr/share/icons:$HOME/.local/share/icons"
+# X11 belt-and-braces: hides the pointer even off the Chromium window. Dies with
+# the service (same cgroup); a no-op under Wayland.
 if command -v unclutter >/dev/null 2>&1; then
   unclutter -idle 0 &
 fi
