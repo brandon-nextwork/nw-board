@@ -272,7 +272,7 @@ test("a display connecting receives a snapshot of the Feed reflecting earlier ev
   expect(snapshot).toEqual({
     type: "snapshot",
     // Hubot and Carl have one event each today; hubot's landed first.
-    mvp: { name: "hubot", count: 1 },
+    mvp: { names: ["hubot"], count: 1 },
     // #42 was merged, never seen open, so nothing is in flight.
     openPrs: [],
     // Snapshot entries carry the server timestamp they were recorded at, so a
