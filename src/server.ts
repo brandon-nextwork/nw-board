@@ -178,8 +178,8 @@ export async function startServer(port: number, options: Options = {}) {
 
   // Today's MVP: the Actor with the most PR merges since local midnight. Derived
   // from the Feed on read — its 24h window always contains today — so the midnight
-  // reset needs no state and no timer. Ties keep whoever reached the count first
-  // (Map insertion order plus a strict >).
+  // reset needs no state and no timer. A tie names every contender, ordered by
+  // first merge of the day (Map insertion order), and the display rotates between them.
   const todaysMvp = () => {
     const midnight = startOfDay(now());
     const counts = new Map<string, number>();
@@ -187,9 +187,10 @@ export async function startServer(port: number, options: Options = {}) {
       // Only merges count toward the crown; "" (GitHub named nobody) can't wear it.
       if (at >= midnight && event.type === "pr-merged" && event.actor)
         counts.set(event.actor, (counts.get(event.actor) ?? 0) + 1);
-    let mvp: { name: string; count: number } | null = null;
+    let mvp: { names: string[]; count: number } | null = null;
     for (const [name, count] of counts)
-      if (!mvp || count > mvp.count) mvp = { name, count };
+      if (!mvp || count > mvp.count) mvp = { names: [name], count };
+      else if (count === mvp.count) mvp.names.push(name);
     return mvp;
   };
 
@@ -237,12 +238,12 @@ export async function startServer(port: number, options: Options = {}) {
   // Display protocol (server -> client only):
   //   on connect: {"type":"snapshot","feed":[{<domain event>, "at":<ms>}, ...],
   //                "openPrs":[{repo, number, title, actor}, ...],
-  //                "mvp":{"name":<string>,"count":<number>}|null}
+  //                "mvp":{"names":[<string>, ...],"count":<number>}|null}
   //               feed is oldest first and holds the last 24h, each entry stamped with
   //               the server time it happened; openPrs is the current set of open PRs
   //               (state, so no 24h expiry) — what's in flight now, each with the
-  //               GitHub login of its author; mvp is today's leading Actor, null until
-  //               today has an event.
+  //               GitHub login of its author; mvp names all Actors tied for today's
+  //               lead, null until today has an event.
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title, actor}
   //               actor is the GitHub login of whoever did it (the merger for a
   //               pr-merged, the reviewer for a review, the commenter for a comment),
