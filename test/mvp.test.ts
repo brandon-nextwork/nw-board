@@ -56,7 +56,7 @@ test("today's MVP is the Actor with the most PR merges — other event types don
   await postWebhook(running.port, { body: mergeBy(44, "octocat") });
 
   expect((await readSnapshot(running.port)).mvp).toEqual({
-    name: "hubot",
+    names: ["hubot"],
     count: 2,
   });
 });
@@ -71,7 +71,7 @@ test("events from before local midnight do not count toward today's MVP", async 
 
   // Yesterday's merge is still inside the 24h Feed, but the MVP only counts today.
   expect((await readSnapshot(running.port)).mvp).toEqual({
-    name: "octocat",
+    names: ["octocat"],
     count: 1,
   });
 });
@@ -85,17 +85,34 @@ test("a day with no merges has no MVP, however busy it was otherwise", async () 
   expect((await readSnapshot(running.port)).mvp).toBe(null);
 });
 
-test("a tie for today's MVP keeps whoever reached the count first", async () => {
+test("a tie for today's MVP names every contender, ordered by first merge", async () => {
   running = await start();
 
   await postWebhook(running.port, { body: merged }); // hubot
   await postWebhook(running.port, { body: mergeBy(44, "octocat") });
+  await postWebhook(running.port, { body: mergeBy(45, "monalisa") });
 
-  expect((await readSnapshot(running.port)).mvp).toEqual({ name: "hubot", count: 1 });
+  expect((await readSnapshot(running.port)).mvp).toEqual({
+    names: ["hubot", "octocat", "monalisa"],
+    count: 1,
+  });
+});
+
+test("pulling ahead of an accumulated tie clears the other contenders", async () => {
+  running = await start();
+
+  await postWebhook(running.port, { body: merged }); // hubot ×1
+  await postWebhook(running.port, { body: mergeBy(44, "octocat") });
+  await postWebhook(running.port, { body: mergeBy(45, "octocat") });
+
+  expect((await readSnapshot(running.port)).mvp).toEqual({
+    names: ["octocat"],
+    count: 2,
+  });
 });
 
 test.for([
-  ["a Celebration Event", { body: merged }, { name: "hubot", count: 1 }],
+  ["a Celebration Event", { body: merged }, { names: ["hubot"], count: 1 }],
   ["an Ambient Event", { body: comment, event: "issue_comment" }, null],
 ])("%s delivery carries the updated MVP to a connected display", async ([, options, mvp]) => {
   running = await start();
@@ -122,7 +139,7 @@ test("a display left connected across local midnight is pushed the reset MVP", a
   const snapshots = messages.filter((m) => m.type === "snapshot");
   // The snapshot sent on connect, then exactly one for the day rolling over —
   // not one per tick.
-  expect(snapshots.map((s) => s.mvp)).toEqual([{ name: "hubot", count: 1 }, null]);
+  expect(snapshots.map((s) => s.mvp)).toEqual([{ names: ["hubot"], count: 1 }, null]);
 });
 
 test("the MVP is named by the config names map, not the raw login", async () => {
@@ -130,7 +147,7 @@ test("the MVP is named by the config names map, not the raw login", async () => 
 
   await postWebhook(running.port, { body: merged }); // merged_by hubot -> "Botty"
 
-  expect((await readSnapshot(running.port)).mvp).toEqual({ name: "Botty", count: 1 });
+  expect((await readSnapshot(running.port)).mvp).toEqual({ names: ["Botty"], count: 1 });
 });
 
 test("a freshly opened PR appears at the head of the In Flight list, not buried at the tail", async () => {

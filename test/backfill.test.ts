@@ -419,7 +419,7 @@ test("a merge Backfilled from earlier today counts toward the MVP", async () => 
   running = await start(api.base);
 
   expect((await connectAndReadSnapshot(running!.port)).mvp).toEqual({
-    name: "merge-mike",
+    names: ["merge-mike"],
     count: 1,
   });
 });

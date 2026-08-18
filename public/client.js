@@ -632,15 +632,36 @@ const FLASH_MS = 500;
 let flashLeft = 0;
 let mvpFill = C.dim;
 let currentMvp = null;
-function setMvp(mvp) {
+let mvpNames = [];
+let mvpIndex = 0;
+function drawMvpName() {
   // First name only: the board has one line of marquee, not a full name.
-  const name = mvp ? String(mvp.name).split(" ")[0] : "ANYONE'S GAME";
-  const changed = name !== mvpName.text;
-  mvpName.text = name;
+  mvpName.text = mvpNames.length
+    ? String(mvpNames[mvpIndex % mvpNames.length]).split(" ")[0]
+    : "ANYONE'S GAME";
+  // Right-align the pair: the tally hangs off the end of the name.
+  mvpName.position.x = 1824 - (mvpNames.length ? Math.ceil(mvpTally.width) + 14 : 0);
+}
+// A tie shares the crown, so the marquee cycles the contenders. Rotation is not a
+// lead change: no flash, only a new set of contenders earns one — and the timer
+// re-arms on every change so the first contender gets a full turn under the flash.
+let mvpRotate;
+function setMvp(mvp) {
+  const names = mvp ? mvp.names : [];
+  const changed = names.join("\n") !== mvpNames.join("\n");
+  mvpNames = names;
+  if (changed) {
+    mvpIndex = 0;
+    clearInterval(mvpRotate);
+    mvpRotate = setInterval(() => {
+      if (mvpNames.length < 2) return;
+      mvpIndex = (mvpIndex + 1) % mvpNames.length;
+      drawMvpName();
+    }, 3000);
+  }
   mvpTally.text = mvp ? `×${mvp.count}` : "";
   mvpFill = mvp ? C.amber : C.dim;
-  // Right-align the pair: the tally hangs off the end of the name.
-  mvpName.position.x = 1824 - (mvp ? Math.ceil(mvpTally.width) + 14 : 0);
+  drawMvpName();
   if (changed) flashLeft = FLASH_MS;
   mvpName.style.fill = changed ? C.white : mvpFill;
 }
@@ -1069,7 +1090,7 @@ function chime(at = "") {
   // Sign-off honours whoever wore the crown when the whistle blew.
   const congratsText =
     endOfDay && currentMvp
-      ? `CONGRATULATIONS TO TODAY'S MVP, ${String(currentMvp.name).toUpperCase()} — YOU CRUSHED IT!`
+      ? `CONGRATULATIONS TO TODAY'S MVP${currentMvp.names.length > 1 ? "S" : ""}, ${currentMvp.names.map((n) => String(n).toUpperCase()).join(" & ")} — YOU CRUSHED IT!`
       : null;
 
   const banner = label(headline, 54, C.magenta, {
@@ -1137,7 +1158,7 @@ app.ticker.add((ticker) => {
 // Display protocol (server -> client only):
 //   {type:"snapshot", feed:[{<domain event>, at}],
 //    openPrs:[{repo,number,title,actor}],       (openPrs.actor is the PR's author)
-//    mvp:{name,count}|null}                     (today's leading Actor, null if none)
+//    mvp:{names,count}|null}                    (all Actors tied for today's lead)
 //   on connect and after every recorded event, then bare domain
 //   events {type, repo, number, title, actor}; actor is the GitHub login of whoever
 //   did it (merger, reviewer, commenter), always a string and "" when GitHub named
@@ -1191,7 +1212,7 @@ renderFlight([]);
 //   arcade.event({type:"pr-merged", repo:"a/b", number:7, title:"x", audible:true})
 //   arcade.celebrate("review-approved") / arcade.ambient("pr-comment") / arcade.chime("09:00")
 //   arcade.play("pr-merged")           — sound only
-//   arcade.setMvp({name:"Maximus",count:12}) / arcade.setMvp(null) — marquee MVP
+//   arcade.setMvp({names:["Maximus"],count:12}) / arcade.setMvp(null) — marquee MVP
 const sample = (type) => ({
   type,
   repo: "example-org/demo",
@@ -1223,7 +1244,7 @@ window.arcade = {
     // The fake MVP goes into currentMvp too, so the 17:00 chime's congrats line
     // has a name to honour; restored afterwards unless a real snapshot already did.
     const real = currentMvp;
-    const fake = { name: "Maximus", count: 12 };
+    const fake = { names: ["Maximus"], count: 12 };
     setTimeout(() => {
       currentMvp = fake;
       setMvp(fake);

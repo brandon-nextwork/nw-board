@@ -10,7 +10,7 @@ Glossary for the PR arcade display (Raspberry Pi + TV, GitHub activity).
 - **Quiet Hours** — a configured daily window during which Celebration Events animate but make no sound.
 - **Backfill** — fetching the current state of Tracked Repos (open PRs, recent activity) at startup, so the display is never empty and missed events don't leave gaps.
 - **Feed** — the ambient stream of the last 24 hours of tracked events.
-- **MVP** — the Actor with the most PR merges since local midnight. Only merges count; a tie keeps whoever reached the count first. Resets at midnight; a day with no merges yet is Anyone's Game.
+- **MVP** — the Actor with the most PR merges since local midnight. Only merges count; a tie names every contender and the marquee rotates between them. Resets at midnight; a day with no merges yet is Anyone's Game.
 - **Day Chime** — a scheduled sound marking the start (09:00) and end (17:00) of the workday, weekdays only. Not tied to any event.
 - **Actor** — who did the thing: merged, reviewed, commented, opened. Shown as the team member's first name via the config names map; a login with no mapping shows as-is.
 - **In Flight** — the currently open PRs across the Tracked Repos. Board state, not events: an open PR stays visible however long ago it was opened, and leaves when merged or closed.
