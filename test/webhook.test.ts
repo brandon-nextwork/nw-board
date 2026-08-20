@@ -42,6 +42,8 @@ test("a signed merged-PR webhook from a Tracked Repo pushes a pr-merged Celebrat
       actor: "hubot",
       title: "Add arcade scene renderer",
       audible: true,
+      // The default config carries no names map, so nobody is on the roster.
+      teammate: false,
     },
   ]);
 });
@@ -83,6 +85,7 @@ test("a merged-PR webhook with a very long PR description still pushes the Celeb
       title: "Add arcade scene renderer",
       actor: "hubot",
       audible: true,
+      teammate: false,
     },
   ]);
 });
@@ -120,6 +123,7 @@ test("a review whose submitter carries no login records an empty actor rather th
       title: "Wire up the Feed",
       actor: "",
       audible: true,
+      teammate: false,
     },
   ]);
 });
@@ -165,6 +169,7 @@ test.for([
       // The reviewer, not the PR's author-alice.
       actor: "reviewer-rita",
       audible: true,
+      teammate: false,
     },
   ],
   [

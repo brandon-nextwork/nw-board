@@ -249,7 +249,10 @@ export async function startServer(port: number, options: Options = {}) {
   //               pr-merged, the reviewer for a review, the commenter for a comment),
   //               always a string — "" when GitHub named nobody.
   //               Celebration Events carry "audible": true|false — Quiet Hours decided
-  //               at delivery time. Ambient Events never make sound, so carry no flag.
+  //               at delivery time — and "teammate": true|false, whether the actor's
+  //               login is in the names map (the recorded clips are for teammates; an
+  //               unmapped actor gets the 8-bit jingle). Ambient Events never make
+  //               sound, so carry neither flag.
   //   chime:      {"type":"day-chime","at":"09:00"}  (weekdays, on the configured times)
   // No domain event type is called "snapshot" or "day-chime", so `type` tells them apart.
   const broadcast = (message: unknown) => {
@@ -403,6 +406,10 @@ export async function startServer(port: number, options: Options = {}) {
     } else if (!trackedRepos.includes(event.repo)) {
       console.log(`webhook ${delivery}: untracked repo ${event.repo}`);
     } else {
+      // Checked against the login before recordEvent swaps in the display name: the
+      // map is the roster, so an unmapped login (a bot, an outside contributor) is
+      // not someone we play a sample for.
+      const teammate = Object.hasOwn(names, event.actor);
       const recorded = recordEvent(event);
       console.log(
         `webhook ${delivery}: ${recorded ? "recorded" : "repeat, dropped"} ${event.type} ${event.repo}#${event.number}`,
@@ -412,7 +419,7 @@ export async function startServer(port: number, options: Options = {}) {
       if (recorded) {
         broadcast(
           CELEBRATIONS.has(event.type)
-            ? { ...event, audible: soundAllowed() }
+            ? { ...event, audible: soundAllowed(), teammate }
             : event,
         );
         // Any event can change today's MVP (and an open/merged/closed also moves the

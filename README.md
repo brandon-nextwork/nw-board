@@ -68,9 +68,11 @@ times, and the login → first-name map. The server won't start without it.
 Change it in git and deploy — editing it on the Pi makes the next deploy
 refuse to fast-forward.
 
-Merge sound: the board plays `public/sounds/another-one.mp3` (the DJ Khaled clip)
-on a merge. The file isn't in git — drop it there yourself; without it the board
-falls back to the 8-bit fanfare.
+Event sounds: the board plays `public/sounds/another-one.mp3` (the DJ Khaled clip)
+on a merge and `public/sounds/bomboclaat.mp3` on an approval. Neither file is in
+git — drop them there yourself; without one the board falls back to that event's
+8-bit jingle. Clips only play for people on the `names` map — a bot or an unmapped
+login gets the jingle, so adding a teammate to the map is what opts them in.
 
 Secrets live only in `/etc/pr-arcade.env` on the Pi
 (`PORT`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TOKEN`).

@@ -790,13 +790,16 @@ const JINGLES = {
 
 // Recorded clips beat synthesis for anything with a voice in it. Drop the file in
 // and it wins; a missing file or blocked playback falls back to the jingle above.
-const SAMPLES = { "pr-merged": "sounds/another-one.mp3" };
+const SAMPLES = {
+  "pr-merged": "sounds/another-one.mp3",
+  "review-approved": "sounds/bomboclaat.mp3",
+};
 
-function play(name) {
+function play(name, teammate = true) {
   const fallback = () => {
     if (ready()) JINGLES[name]?.();
   };
-  if (!SAMPLES[name]) return fallback();
+  if (!SAMPLES[name] || !teammate) return fallback();
   const clip = new Audio(SAMPLES[name]);
   clip.volume = 0.8;
   clip.play().catch(fallback);
@@ -821,7 +824,8 @@ function playNextCelebration() {
   if (takeoverBusy || pending.length === 0) return;
   const next = pending.shift();
   takeoverBusy = true;
-  if (next.audible) play(next.type);
+  // Old servers send no `teammate`; treat its absence as "play the sample".
+  if (next.audible) play(next.type, next.event.teammate !== false);
   const scene = next.type === "pr-merged" ? mergedTakeover : approvedTakeover;
   scene(next.event, () => {
     takeoverBusy = false;

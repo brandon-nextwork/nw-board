@@ -5,6 +5,7 @@ import {
   badConfigPath,
   configPath,
   connectedDisplay,
+  fixture,
   mergedBody,
   postAndWatch,
 } from "./helpers.ts";
@@ -52,10 +53,33 @@ test.for([
         title: "Add arcade scene renderer",
         actor: "hubot",
         audible,
+        teammate: false,
       },
     ]);
   },
 );
+
+test.for([
+  ["on the names map is flagged a teammate", "reviewer-rita", "Rita", true],
+  ["not on the names map is not", "stranger-sam", "stranger-sam", false],
+])("a Celebration Event from someone %s", async ([, login, actor, teammate]) => {
+  running = await startServer(0, {
+    configPath: badConfigPath("config-with-names.json"),
+    now: () => at(THURSDAY, 10, 0),
+  });
+
+  const body = JSON.stringify({
+    ...JSON.parse(fixture("pull-request-review.json")),
+    review: { state: "approved", user: { login } },
+  });
+  const { received } = await postAndWatch(running.port, {
+    body,
+    event: "pull_request_review",
+  });
+
+  // The recorded clip is for teammates; an unmapped actor falls back to the jingle.
+  expect(received).toMatchObject([{ type: "review-approved", actor, teammate }]);
+});
 
 test("an Ambient Event carries no audible flag even inside the sound window", async () => {
   running = await startServer(0, {
