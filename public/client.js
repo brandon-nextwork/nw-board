@@ -788,9 +788,18 @@ const JINGLES = {
   },
 };
 
+// Recorded clips beat synthesis for anything with a voice in it. Drop the file in
+// and it wins; a missing file or blocked playback falls back to the jingle above.
+const SAMPLES = { "pr-merged": "sounds/another-one.mp3" };
+
 function play(name) {
-  if (!ready()) return;
-  JINGLES[name]?.();
+  const fallback = () => {
+    if (ready()) JINGLES[name]?.();
+  };
+  if (!SAMPLES[name]) return fallback();
+  const clip = new Audio(SAMPLES[name]);
+  clip.volume = 0.8;
+  clip.play().catch(fallback);
 }
 
 // --------------------------------------------------------------------------------

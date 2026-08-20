@@ -68,5 +68,9 @@ times, and the login → first-name map. The server won't start without it.
 Change it in git and deploy — editing it on the Pi makes the next deploy
 refuse to fast-forward.
 
+Merge sound: the board plays `public/sounds/another-one.mp3` (the DJ Khaled clip)
+on a merge. The file isn't in git — drop it there yourself; without it the board
+falls back to the 8-bit fanfare.
+
 Secrets live only in `/etc/pr-arcade.env` on the Pi
 (`PORT`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TOKEN`).
