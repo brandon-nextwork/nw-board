@@ -364,6 +364,40 @@ test("a second comment on the same PR is its own Ambient Event rather than a swa
   expect(snapshot.feed).toEqual([stamped, stamped]);
 });
 
+/** The same PR approved by `login`. */
+const approvalFrom = (login: string) =>
+  JSON.stringify({ ...review, review: { state: "approved", user: { login } } });
+
+test("a second approval of the same PR by another reviewer is its own Celebration Event", async () => {
+  running = await start();
+
+  await postWebhook(running.port, {
+    body: approvalFrom("reviewer-rita"),
+    event: "pull_request_review",
+  });
+  const { received } = await postAndWatch(running.port, {
+    body: approvalFrom("reviewer-raj"),
+    event: "pull_request_review",
+  });
+
+  expect(received).toMatchObject([{ type: "review-approved", actor: "reviewer-raj" }]);
+});
+
+test("the same reviewer approving the same PR twice is still dropped as a repeat", async () => {
+  running = await start();
+
+  await postWebhook(running.port, {
+    body: approvalFrom("reviewer-rita"),
+    event: "pull_request_review",
+  });
+  const { received } = await postAndWatch(running.port, {
+    body: approvalFrom("reviewer-rita"),
+    event: "pull_request_review",
+  });
+
+  expect(received).toEqual([]);
+});
+
 test("a display that reconnects after a dropped socket receives a fresh snapshot", async () => {
   running = await start();
   await postWebhook(running.port);

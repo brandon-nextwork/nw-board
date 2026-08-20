@@ -211,7 +211,13 @@ export async function startServer(port: number, options: Options = {}) {
     // event on purpose so the broadcast that follows carries the name too.
     event.actor = names[event.actor] ?? event.actor;
     rollDedupWeek(); // roll the week over before deduping
-    const key = `${event.type}/${event.repo}/${event.number}`;
+    // An approval dedups per actor: two people approving the same PR are two
+    // Celebration Events, and keying by PR alone swallowed the second one for the
+    // rest of the week. The other types stay keyed by PR — Backfill credits a merge
+    // to the author (the list API carries no merged_by) where the webhook credits
+    // the merger, so keying pr-merged by actor would let one merge through twice.
+    const perActor = event.type === "review-approved" ? `/${event.actor}` : "";
+    const key = `${event.type}/${event.repo}/${event.number}${perActor}`;
     if (BACKFILLED.has(event.type)) {
       if (seen.has(key)) return null;
       seen.add(key);
