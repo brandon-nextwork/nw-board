@@ -1,0 +1,20 @@
+{
+  "trackedRepos": [
+    "example-org/projects-app",
+    "example-org/features",
+    "example-org/content"
+  ],
+  "quietHours": {
+    "soundStart": "09:00",
+    "soundEnd": "18:00"
+  },
+  "chimes": [
+    "09:00",
+    "17:00"
+  ],
+  "names": {
+    "octocat": "Mona",
+    "some-github-login": "Firstname"
+  },
+  "devDeployWorkflow": "env-dev.yaml"
+}

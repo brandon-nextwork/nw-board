@@ -184,11 +184,6 @@ PORT="${PORT:-3000}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_USER="$(id -un)"
 ENV_TARGET=/etc/pr-arcade.env
-TRACKED_REPOS=(
-  example-org/projects-app
-  example-org/features
-  example-org/content
-)
 
 # Secrets are staged in a private temp dir and installed to /etc/pr-arcade.env
 # (0600) at the end of the env stage — never anywhere inside the repo. On a
@@ -409,7 +404,30 @@ run "dependencies installed" bash -c "cd '$REPO_DIR' && npm ci"
 verify "node_modules present" test -d "$REPO_DIR/node_modules"
 # The server reads the Tracked Repo list from config.json at startup and exits
 # if it's missing — which looks like an invisible 5-second restart loop.
+# config.json is gitignored (it names your repos and your team), so a fresh
+# clone has only the example: copy it, then say so — the placeholder repos in
+# it are not yours, and every step below works off this list.
+if [[ ! -f "$REPO_DIR/config.json" ]]; then
+  cp "$REPO_DIR/config.example.json" "$REPO_DIR/config.json"
+  warn "created config.json from config.example.json — edit it before going further:"
+  note "  trackedRepos      the repos whose activity feeds the board"
+  note "  names             GitHub login -> first name, and the roster for clips"
+  note "  devDeployWorkflow the deploy-to-dev workflow's file name"
+  pause "Enter once you have edited $REPO_DIR/config.json"
+fi
 verify "config.json present (the Tracked Repo list)" test -f "$REPO_DIR/config.json"
+# Read the list back rather than keeping a second copy in this script.
+mapfile -t TRACKED_REPOS < <(
+  python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["trackedRepos"]))' \
+    "$REPO_DIR/config.json"
+)
+if [[ ${#TRACKED_REPOS[@]} -eq 0 ]]; then
+  # Also where a malformed config.json lands: the read above fails inside a
+  # process substitution, which set -e does not catch, leaving the list empty.
+  fail "config.json lists no trackedRepos — the webhook and test stages need it"
+  exit 1
+fi
+ok "tracked repos: ${TRACKED_REPOS[*]}"
 pause "Enter to create the secrets file"
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
@@ -431,7 +449,7 @@ else
   say ""
   say "Now a fine-grained PAT, so the display can Backfill open PRs on boot:"
   open_url "https://github.com/settings/personal-access-tokens/new"
-  step "Resource owner: example-org"
+  step "Resource owner: the org that owns your Tracked Repos"
   step "Repository access: Only select repositories → projects-app, features, content"
   step "Repository permissions → Metadata: Read-only (it's mandatory)"
   step "Repository permissions → Pull requests: Read-only"
@@ -471,7 +489,7 @@ verify "the board is reachable through the funnel" \
 pause "Enter to register the webhooks"
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
-stage "GitHub webhooks — the three Tracked Repos"
+stage "GitHub webhooks — the Tracked Repos"
 say "Each Tracked Repo needs a webhook pointing at the Pi. Settings → Webhooks"
 say "→ Add webhook, with exactly these values:"
 say ""
@@ -487,7 +505,7 @@ note "                   Workflow runs"
 note "                 (untick everything else, including Pushes)"
 say ""
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 &&
-   confirm "gh CLI is authed — register all three webhooks automatically?"; then
+   confirm "gh CLI is authed — register all ${#TRACKED_REPOS[@]} webhooks automatically?"; then
   # The hook config (url, events) and the secret are both sent every time. An
   # existing hook gets PATCHed rather than skipped: on a fresh secret, skipping
   # would leave GitHub signing with the old one and every real delivery 401ing
@@ -529,7 +547,7 @@ else
     SKIPPED+=("update the secret on any PRE-EXISTING webhook (it was regenerated this run)")
   fi
   say ""
-  pause "Enter once all three are added"
+  pause "Enter once all ${#TRACKED_REPOS[@]} are added"
   for repo in "${TRACKED_REPOS[@]}"; do
     if command -v gh >/dev/null 2>&1; then
       verify "$repo has a hook pointing here" \
@@ -545,12 +563,12 @@ pause "Enter for the end-to-end test"
 stage "End-to-end test"
 say "Sending a signed 'PR merged' delivery through the public funnel URL,"
 say "exactly the way GitHub will. Watch the TV."
-PAYLOAD="$REPO_DIR/test/fixtures/pull-request-merged.json"
-if [[ ! -f "$PAYLOAD" ]]; then
-  PAYLOAD="$(mktemp "${TMPDIR:-/tmp}/pr-arcade-payload.XXXXXX")"
-  printf '{"action":"closed","repository":{"full_name":"%s"},"pull_request":{"merged":true,"number":1,"title":"setup wizard smoke test"}}' \
-    "${TRACKED_REPOS[0]}" >"$PAYLOAD"
-fi
+# Built from the configured list, not a test fixture: the fixture's repo is a
+# placeholder, and an untracked repo is dropped on arrival — a green 204 with
+# nothing on the TV, which reads as a display fault rather than a config one.
+PAYLOAD="$(mktemp "${TMPDIR:-/tmp}/pr-arcade-payload.XXXXXX")"
+printf '{"action":"closed","repository":{"full_name":"%s"},"pull_request":{"merged":true,"number":1,"title":"setup wizard smoke test","merged_by":{"login":"setup-wizard"}}}' \
+  "${TRACKED_REPOS[0]}" >"$PAYLOAD"
 SIG="$(sign_payload "$WEBHOOK_SECRET" "$PAYLOAD")"
 CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
   -X POST "$WEBHOOK_URL" \

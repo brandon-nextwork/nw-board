@@ -32,7 +32,7 @@ Pulls, runs `npm ci` only if `package.json`/`package-lock.json` changed, restart
 ## Notes
 
 - **Secrets** live only in `/etc/pr-arcade.env`, mode 0600, owned by the display user. Never in the repo. Contains `PORT`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TOKEN`.
-- **Tracked Repos** live in `config.json` at the repo root — in git, not a secret. The server won't start without it. Editing it on the Pi will make the next `deploy.sh` refuse to fast-forward; change it in git instead.
+- **Tracked Repos** live in `config.json` at the repo root, alongside the roster and the chime times. It is gitignored — it names your repos and your team — so it lives only on this Pi; edit it here and restart. `cp config.example.json config.json` to start one. The server won't start without it.
 - **Port** is 3000 in two places: `/etc/pr-arcade.env` and the URL in `kiosk.sh`. Change both.
 - **`npm ci`, not `npm ci --omit=dev`**: `npm start` runs the server through `tsx`, which is a devDependency. Switch to `--omit=dev` if that ever changes.
 - **`deploy.sh` assumes passwordless sudo** (the stock Pi OS default) and git credentials that don't prompt — the wizard sets up `gh auth setup-git` or points you at a deploy key.

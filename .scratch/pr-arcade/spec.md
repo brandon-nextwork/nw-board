@@ -43,7 +43,7 @@ A display-only "PR Arcade" running fullscreen on the TV: a retro-arcade (pixel a
 ## Implementation Decisions
 
 - **Architecture**: one Node/TypeScript server process on the Pi doing four jobs: webhook receiver, Backfill on startup, state keeper, and WebSocket/static server for the display client. A Chromium kiosk on the same Pi runs the client fullscreen.
-- **Ingress**: GitHub per-repo webhooks on the three Tracked Repos (`projects-app`, `features`, `content` in `example-org`), delivered to the Pi through Tailscale Funnel (free tier, stable `*.ts.net` hostname, TLS handled by Tailscale). Webhook payloads verified with the shared webhook secret.
+- **Ingress**: GitHub per-repo webhooks on the Tracked Repos listed in `config.json`, delivered to the Pi through Tailscale Funnel (free tier, stable `*.ts.net` hostname, TLS handled by Tailscale). Webhook payloads verified with the shared webhook secret.
 - **Event pipeline**: GitHub payloads are translated at the edge into a small domain-event vocabulary (Celebration Event: `pr-merged`, `review-approved`; Ambient Event: `pr-opened`, `pr-closed`, `changes-requested`, `pr-comment`). Everything downstream — state, protocol, client — speaks only domain events, so a Linear adapter can be added later without touching the display.
 - **Event set**: PR opened, merged, closed-without-merge; review approved / changes-requested; PR comments. Drafts, pushes, CI status, and issues are ignored.
 - **State**: in-memory, rebuilt on boot via Backfill (open PRs and last-24h activity from the GitHub API using a fine-grained PAT). No database. Team Score is derived from the week's Celebration Events, so it survives restarts via Backfill rather than persistence.

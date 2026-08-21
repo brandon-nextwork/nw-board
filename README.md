@@ -57,18 +57,27 @@ journalctl -u pr-arcade | grep webhook  # delivery outcomes only
 
 Locally the same lines go to stdout of `npm start`.
 
-Note: a green 204 in GitHub's webhook UI isn't proof it was ours —
-`projects-app` also has a Discord webhook. Check by the hook's `config.url`,
-then confirm the delivery id in the logs.
+Note: a green 204 in GitHub's webhook UI isn't proof it was ours — a repo can
+have other webhooks on it (a chat notifier, say) returning their own 204s.
+Check by the hook's `config.url`, then confirm the delivery id in the logs.
 
 ## Configuration
 
-`config.json` (in git, not secret): Tracked Repos, Quiet Hours, Day Chime
-times, and the login → first-name map. `devDeployWorkflow` is the
-file name of the deploy-to-dev workflow (`env-dev.yaml`) whose last successful
-run names who's in dev. The server won't start without it.
-Change it in git and deploy — editing it on the Pi makes the next deploy
-refuse to fast-forward.
+`config.json` holds Tracked Repos, Quiet Hours, Day Chime times, and the login →
+first-name map. `devDeployWorkflow` is the file name of the deploy-to-dev
+workflow whose last successful run names who's in dev. The server won't start
+without the file.
+
+It is **gitignored** — it names your repos and your team, so it stays out of a
+public repo. Copy the template and fill it in:
+
+```sh
+cp config.example.json config.json
+```
+
+Because it's untracked, edit it in place on whatever machine runs the board;
+`deploy.sh` pulls straight past it. `setup-wizard.sh` creates it from the
+template on a fresh clone and reads the Tracked Repo list back out of it.
 
 Event sounds: the board plays `public/sounds/another-one.mp3` (the DJ Khaled clip)
 on a merge and `public/sounds/bomboclaat.mp3` on an approval. Neither file is in

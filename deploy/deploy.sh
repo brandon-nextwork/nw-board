@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # The one-command update. Run on the Pi, or from anywhere:
-#   ssh pi@<pi-host> pr-arcade/deploy/deploy.sh
+#   ssh <user>@<pi-host> pr-arcade/deploy/deploy.sh
 #
 # Assumes passwordless sudo for the pi user (the stock Pi OS default).
 
@@ -13,7 +13,7 @@ BEFORE="$(git rev-parse HEAD)"
 if ! git pull --ff-only; then
   echo >&2
   echo "==> git pull --ff-only failed. Usually one of:" >&2
-  echo "    • local edits (config.json is the usual culprit): git stash, deploy, git stash pop" >&2
+  echo "    • local edits to a tracked file: git stash, deploy, git stash pop" >&2
   echo "    • the branch diverged: git status, then sort it out by hand" >&2
   echo "    • no credentials for a private repo: gh auth setup-git, or use a deploy key" >&2
   exit 1
