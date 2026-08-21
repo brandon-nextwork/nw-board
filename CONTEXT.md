@@ -13,4 +13,5 @@ Glossary for the PR arcade display (Raspberry Pi + TV, GitHub activity).
 - **MVP** — the Actor with the most PR merges since local midnight. Only merges count; a tie names every contender and the marquee rotates between them. Resets at midnight; a day with no merges yet is Anyone's Game.
 - **Day Chime** — a scheduled sound marking the start (09:00) and end (17:00) of the workday, weekdays only. Not tied to any event.
 - **Actor** — who did the thing: merged, reviewed, commented, opened. Shown as the team member's first name via the config names map; a login with no mapping shows as-is.
+- **In Dev** — the last teammate to trigger a successful run of the `devDeployWorkflow`. Board state, not an event: it sits on the Feed header until someone else deploys. Roster-only — a run triggered by a bot names nobody.
 - **In Flight** — the currently open PRs across the Tracked Repos. Board state, not events: an open PR stays visible however long ago it was opened, and leaves when merged or closed.

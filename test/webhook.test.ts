@@ -280,6 +280,8 @@ test("a display connecting receives a snapshot of the Feed reflecting earlier ev
     mvp: { names: ["hubot"], count: 1 },
     // #42 was merged, never seen open, so nothing is in flight.
     openPrs: [],
+    // No deploy webhook has landed, so the header names nobody in dev.
+    devDeploy: null,
     // Snapshot entries carry the server timestamp they were recorded at, so a
     // display can expire them itself rather than restamping them on receipt.
     feed: [
@@ -535,4 +537,60 @@ test("an unsigned webhook with no Content-Type is rejected and pushes no Celebra
 
   expect(status).toBe(401);
   expect(received).toEqual([]);
+});
+
+// The last human to deploy to dev: a successful run of the configured workflow,
+// shown on the Feed header rather than in the Feed.
+const deployRun = (change: (run: any) => void = () => {}) => {
+  const payload = JSON.parse(fixture("workflow-run-dev-deploy.json"));
+  change(payload.workflow_run);
+  return JSON.stringify(payload);
+};
+const startWithNames = () =>
+  startServer(0, {
+    configPath: badConfigPath("config-with-names.json"),
+    now: () => IN_THE_SOUND_WINDOW,
+  });
+
+test("a successful dev deploy names its triggering teammate on the next snapshot", async () => {
+  running = await startWithNames();
+
+  const status = (await postWebhook(running.port, {
+    body: deployRun(),
+    event: "workflow_run",
+  })).status;
+  const snapshot = await connectAndReadSnapshot(running.port);
+
+  expect(status).toBe(204);
+  // The display name from the names map, not the login.
+  expect(snapshot.devDeploy).toEqual({ actor: "Rita", at: Date.parse("2026-08-13T09:41:00Z") });
+  // A deploy is not a Feed event.
+  expect(snapshot.feed).toEqual([]);
+});
+
+test.for([
+  ["a failed run", deployRun((run) => (run.conclusion = "failure"))],
+  ["a run of another workflow", deployRun((run) => (run.path = ".github/workflows/env-prod.yaml"))],
+  ["a run triggered off the roster", deployRun((run) => (run.triggering_actor = { login: "dependabot[bot]" }))],
+])("%s names nobody in dev", async ([, body]) => {
+  running = await startWithNames();
+
+  await postWebhook(running.port, { body: body as string, event: "workflow_run" });
+
+  expect((await connectAndReadSnapshot(running.port)).devDeploy).toBe(null);
+});
+
+test("an older dev deploy delivered late does not replace a newer one", async () => {
+  running = await startWithNames();
+
+  await postWebhook(running.port, { body: deployRun(), event: "workflow_run" });
+  await postWebhook(running.port, {
+    body: deployRun((run) => {
+      run.updated_at = "2026-08-13T08:00:00Z";
+      run.triggering_actor = { login: "hubot" };
+    }),
+    event: "workflow_run",
+  });
+
+  expect((await connectAndReadSnapshot(running.port)).devDeploy?.actor).toBe("Rita");
 });

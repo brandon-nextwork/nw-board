@@ -442,6 +442,20 @@ setInterval(() => {
     .toUpperCase();
   if (wallClock.text !== t) wallClock.text = t;
 }, 1000);
+// The last human to deploy to dev, centred on the header: the board answers
+// "who put that on dev?" without anyone opening GitHub.
+const devDeployLabel = label("", 30, C.green);
+devDeployLabel.anchor.set(0.5, 0);
+devDeployLabel.position.set(936, 12);
+feedPanel.addChild(devDeployLabel);
+/** {actor, at} from the snapshot, or null when nobody on the roster has deployed. */
+function setDevDeploy(devDeploy) {
+  // First name only, like the marquee: the header has one line.
+  devDeployLabel.text = devDeploy
+    ? `IN DEV: ${String(devDeploy.actor).split(" ")[0].toUpperCase()}`
+    : "";
+}
+
 const feedEmpty = label("...WAITING FOR PLAYERS...", 26, C.dim);
 feedEmpty.position.set(24, 90);
 feedPanel.addChild(feedEmpty);
@@ -1171,7 +1185,8 @@ app.ticker.add((ticker) => {
 // Display protocol (server -> client only):
 //   {type:"snapshot", feed:[{<domain event>, at}],
 //    openPrs:[{repo,number,title,actor}],       (openPrs.actor is the PR's author)
-//    mvp:{names,count}|null}                    (all Actors tied for today's lead)
+//    mvp:{names,count}|null,                    (all Actors tied for today's lead)
+//    devDeploy:{actor,at}|null}                 (last teammate to deploy to dev)
 //   on connect and after every recorded event, then bare domain
 //   events {type, repo, number, title, actor}; actor is the GitHub login of whoever
 //   did it (merger, reviewer, commenter), always a string and "" when GitHub named
@@ -1188,6 +1203,7 @@ function handleMessage(data) {
     feed = data.feed.map(stamp);
     currentMvp = data.mvp;
     setMvp(currentMvp);
+    setDevDeploy(data.devDeploy);
     renderFlight(data.openPrs);
   } else {
     feed.push(stamp(data));
@@ -1226,6 +1242,7 @@ renderFlight([]);
 //   arcade.celebrate("review-approved") / arcade.ambient("pr-comment") / arcade.chime("09:00")
 //   arcade.play("pr-merged")           — sound only
 //   arcade.setMvp({names:["Maximus"],count:12}) / arcade.setMvp(null) — marquee MVP
+//   arcade.setDevDeploy({actor:"Maximus"}) / arcade.setDevDeploy(null) — feed header
 const sample = (type) => ({
   type,
   repo: "example-org/demo",
@@ -1246,6 +1263,7 @@ window.arcade = {
   chime,
   play,
   setMvp,
+  setDevDeploy,
   event: handleMessage,
   demo() {
     // Every animation and sound in order, then back to the real board state:

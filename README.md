@@ -64,7 +64,9 @@ then confirm the delivery id in the logs.
 ## Configuration
 
 `config.json` (in git, not secret): Tracked Repos, Quiet Hours, Day Chime
-times, and the login → first-name map. The server won't start without it.
+times, and the login → first-name map. `devDeployWorkflow` is the
+file name of the deploy-to-dev workflow (`env-dev.yaml`) whose last successful
+run names who's in dev. The server won't start without it.
 Change it in git and deploy — editing it on the Pi makes the next deploy
 refuse to fast-forward.
 

@@ -1,0 +1,11 @@
+{
+  "action": "completed",
+  "repository": { "full_name": "example-org/projects-app" },
+  "workflow_run": {
+    "name": "Deploy to Dev",
+    "path": ".github/workflows/env-dev.yaml",
+    "conclusion": "success",
+    "updated_at": "2026-08-13T09:41:00Z",
+    "triggering_actor": { "login": "reviewer-rita" }
+  }
+}

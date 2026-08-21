@@ -483,6 +483,7 @@ note "  Events:        'Let me select individual events' →"
 note "                   Pull requests"
 note "                   Pull request reviews"
 note "                   Issue comments"
+note "                   Workflow runs"
 note "                 (untick everything else, including Pushes)"
 say ""
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 &&
@@ -493,7 +494,7 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 &&
   # while this wizard's own test — signed with the new secret — looks green.
   # Body on stdin rather than -f flags: keeps the secret out of the process list.
   hook_body() {
-    printf '{"active":true,"events":["pull_request","pull_request_review","issue_comment"],"config":{"url":"%s","content_type":"json","insecure_ssl":"0","secret":"%s"}}' \
+    printf '{"active":true,"events":["pull_request","pull_request_review","issue_comment","workflow_run"],"config":{"url":"%s","content_type":"json","insecure_ssl":"0","secret":"%s"}}' \
       "$WEBHOOK_URL" "$WEBHOOK_SECRET"
   }
   for repo in "${TRACKED_REPOS[@]}"; do

@@ -15,5 +15,6 @@
   "names": {
     "hubot": "Botty",
     "reviewer-rita": "Rita"
-  }
+  },
+  "devDeployWorkflow": "env-dev.yaml"
 }

@@ -122,6 +122,14 @@ export async function startServer(port: number, options: Options = {}) {
     if (typeof value !== "string")
       throw new Error(`${configPath}: names.${key} must be a string`);
 
+  // The dev deploy workflow, as its file name (e.g. "env-dev.yaml"). Optional: with
+  // no workflow configured the board simply never names a dev deployer.
+  const devDeployWorkflow: string | undefined = config.devDeployWorkflow;
+  if (devDeployWorkflow !== undefined && typeof devDeployWorkflow !== "string")
+    throw new Error(
+      `${configPath}: devDeployWorkflow must be a workflow file name, e.g. "env-dev.yaml"`,
+    );
+
   // Quiet Hours: sound is allowed on weekdays between these two local times only.
   const quietHours = `${configPath}: quietHours must be {"soundStart":"HH:MM","soundEnd":"HH:MM"}`;
   const soundStart = minutesOfDay(config.quietHours?.soundStart, quietHours);
@@ -236,6 +244,32 @@ export async function startServer(port: number, options: Options = {}) {
     return true;
   };
 
+  // The last human to deploy to dev: board state like the MVP, not a Feed event, so
+  // a newer deploy replaces it and nothing expires.
+  let devDeploy: { actor: string; at: number } | null = null;
+
+  /**
+   * A successful run of the configured deploy workflow, credited to whoever triggered
+   * it. Roster-only on purpose: the question is which human put that on dev, and a run
+   * triggered by a bot names no human. Returns true when it moved the state.
+   */
+  const recordDevDeploy = (repo: string, run: any) => {
+    const actor = login(run?.triggering_actor);
+    if (
+      !devDeployWorkflow ||
+      !trackedRepos.includes(repo) ||
+      run?.path !== `.github/workflows/${devDeployWorkflow}` ||
+      run?.conclusion !== "success" ||
+      !Object.hasOwn(names, actor)
+    )
+      return false;
+    const at = Date.parse(run.updated_at);
+    // A redelivery or a late Backfill must not un-do a newer deploy.
+    if (!Number.isFinite(at) || at <= (devDeploy?.at ?? 0)) return false;
+    devDeploy = { actor: names[actor]!, at };
+    return true;
+  };
+
   const app = express();
   app.use(express.static(fileURLToPath(new URL("../public", import.meta.url))));
   const http = createServer(app);
@@ -244,12 +278,14 @@ export async function startServer(port: number, options: Options = {}) {
   // Display protocol (server -> client only):
   //   on connect: {"type":"snapshot","feed":[{<domain event>, "at":<ms>}, ...],
   //                "openPrs":[{repo, number, title, actor}, ...],
-  //                "mvp":{"names":[<string>, ...],"count":<number>}|null}
+  //                "mvp":{"names":[<string>, ...],"count":<number>}|null,
+  //                "devDeploy":{"actor":<string>,"at":<ms>}|null}
   //               feed is oldest first and holds the last 24h, each entry stamped with
   //               the server time it happened; openPrs is the current set of open PRs
   //               (state, so no 24h expiry) — what's in flight now, each with the
   //               GitHub login of its author; mvp names all Actors tied for today's
-  //               lead, null until today has an event.
+  //               lead, null until today has an event; devDeploy is the last teammate
+  //               to deploy to dev, null until one has.
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title, actor}
   //               actor is the GitHub login of whoever did it (the merger for a
   //               pr-merged, the reviewer for a review, the commenter for a comment),
@@ -269,6 +305,7 @@ export async function startServer(port: number, options: Options = {}) {
     feed: currentFeed(),
     openPrs,
     mvp: todaysMvp(),
+    devDeploy,
   });
   wss.on("connection", (socket) => socket.send(JSON.stringify(snapshot())));
 
@@ -300,7 +337,7 @@ export async function startServer(port: number, options: Options = {}) {
       });
       if (!response.ok)
         throw new Error(`GitHub API ${response.status} for ${path}`);
-      return (await response.json()) as any[];
+      return (await response.json()) as any;
     };
 
     const backfillRepo = async (repo: string) => {
@@ -378,6 +415,19 @@ export async function startServer(port: number, options: Options = {}) {
         console.warn(`Backfill failed for ${repo}, its history is live-only: ${error}`),
       );
 
+    // The last dev deploy is state, not a Feed entry, so a restart has to refetch it
+    // or the header sits blank until the next deploy. A repo without the workflow
+    // answers 404 — it just has no dev deploys to find.
+    if (devDeployWorkflow)
+      for (const repo of trackedRepos)
+        await get(
+          `${repo}/actions/workflows/${devDeployWorkflow}/runs?status=success&per_page=20`,
+        )
+          .then((runs) => {
+            for (const run of runs.workflow_runs ?? []) recordDevDeploy(repo, run);
+          })
+          .catch((error) => console.warn(`Backfill found no dev deploys in ${repo}: ${error}`));
+
     // Oldest first, matching the Feed's order (its 24h expiry shifts off the front).
     for (const { at, event } of entries.sort((a, b) => a.at - b.at))
       recordEvent(event, at);
@@ -401,10 +451,22 @@ export async function startServer(port: number, options: Options = {}) {
     }
 
     const payload = JSON.parse(req.body.toString("utf8"));
-    const event = toDomainEvent(req.header("x-github-event"), payload);
+    const githubEvent = req.header("x-github-event");
+    const event = toDomainEvent(githubEvent, payload);
     // One line per accepted delivery saying what became of it — a 204 has four
     // different meanings, and debugging a live miss on the Pi needs to see which.
     const delivery = req.header("x-github-delivery") ?? "?";
+    // A deploy is not a PR event: it carries no PR to name, so it updates the header
+    // state and pushes a snapshot rather than joining the Feed.
+    if (githubEvent === "workflow_run") {
+      const recorded = recordDevDeploy(payload.repository?.full_name, payload.workflow_run);
+      console.log(
+        `webhook ${delivery}: ${recorded ? `dev deploy by ${devDeploy?.actor}` : "ignored workflow_run"}`,
+      );
+      if (recorded) broadcast(snapshot());
+      res.sendStatus(204);
+      return;
+    }
     if (!event) {
       console.log(
         `webhook ${delivery}: ignored ${req.header("x-github-event")}/${payload.action ?? "?"}`,
