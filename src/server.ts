@@ -468,7 +468,7 @@ export async function startServer(port: number, options: Options = {}) {
     try {
       const response = await fetch(url, {
         headers: { authorization: `Bearer ${token}`, accept: "application/json" },
-        signal: AbortSignal.timeout(options.posthogTimeoutMs ?? 10_000),
+        signal: AbortSignal.timeout(options.posthogTimeoutMs ?? 60_000),
       });
       if (!response.ok) throw new Error(`PostHog returned ${response.status}`);
       const payload = await limitedText(response, "WAU dashboard response exceeds 1 MiB");
