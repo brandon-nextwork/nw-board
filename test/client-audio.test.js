@@ -91,7 +91,7 @@ test.for([
   ["day-start", "sounds/oh-my-gosh.mp3"],
   ["day-chime", "sounds/super-mario-end.mp3"],
   // Ambient but audible: it needs a jingle of its own, or a missing file is silence.
-  ["pr-opened", "sounds/metrooo.mp3"],
+  ["pr-opened", "sounds/yo-pierre.mp3"],
 ])("the %s clip falls back to a jingle when the file is missing", async ([name, file]) => {
   const { AudioContext, starts } = audioContext("suspended");
   const Audio = vi.fn(function Audio() {
@@ -138,7 +138,7 @@ test("an audible pr-opened plays its clip", async () => {
     true,
   );
 
-  expect(clips).toEqual(["sounds/metrooo.mp3"]);
+  expect(clips).toEqual(["sounds/yo-pierre.mp3"]);
 });
 
 test.for([
@@ -176,7 +176,7 @@ test("a burst of opened PRs makes the noise once", async () => {
   );
 
   expect(results).toEqual([true, false, false, false, false]);
-  expect(clips).toEqual(["sounds/metrooo.mp3"]);
+  expect(clips).toEqual(["sounds/yo-pierre.mp3"]);
 });
 
 test("the cooldown expires, so a later PR is heard again", async () => {
@@ -192,7 +192,7 @@ test("the cooldown expires, so a later PR is heard again", async () => {
     true,
   );
 
-  expect(clips).toEqual(["sounds/metrooo.mp3", "sounds/metrooo.mp3"]);
+  expect(clips).toEqual(["sounds/yo-pierre.mp3", "sounds/yo-pierre.mp3"]);
 });
 
 test("a flagged event with no clip and no jingle is silent rather than a crash", async () => {
@@ -215,5 +215,5 @@ test("the takeover path is not throttled by the ambient cooldown", async () => {
   // Celebrations serialize behind their 5s scene; they must not also inherit this gate.
   await expect(player.play("pr-merged", true)).resolves.toBe(true);
 
-  expect(clips).toEqual(["sounds/metrooo.mp3", "sounds/jetson.mp3"]);
+  expect(clips).toEqual(["sounds/yo-pierre.mp3", "sounds/jetson.mp3"]);
 });

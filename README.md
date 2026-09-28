@@ -101,7 +101,7 @@ installs must add `newsFeedUrl` to their `config.json` and restart the service t
 enable the news ticker.
 
 Event sounds: the board plays `public/sounds/jetson.mp3` on a merge,
-`public/sounds/omg.mp3` on an approval, and `public/sounds/metrooo.mp3` when a PR
+`public/sounds/omg.mp3` on an approval, and `public/sounds/yo-pierre.mp3` when a PR
 is opened — all three are in git, so a deploy delivers them. The chimes are not:
 `public/sounds/oh-my-gosh.mp3` (start of day) and
 `public/sounds/super-mario-end.mp3` (end of day) have to be dropped in by hand on
