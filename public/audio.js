@@ -37,7 +37,7 @@ const JINGLE_NOTES = {
 };
 
 const SAMPLES = {
-  "pr-merged": "sounds/jetson.mp3",
+  "pr-merged": "sounds/mustard.mp3",
   "review-approved": "sounds/omg.mp3",
   "pr-opened": "sounds/yo-pierre.mp3",
   "day-start": "sounds/oh-my-gosh.mp3",
