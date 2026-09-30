@@ -17,7 +17,10 @@ afterEach(async () => {
   await running?.close();
   running = undefined;
   await Promise.all(
-    upstreams.splice(0).map((server) => new Promise<void>((done) => server.close(() => done()))),
+    upstreams.splice(0).map((server) => {
+      server.closeAllConnections();
+      return new Promise<void>((done) => server.close(() => done()));
+    }),
   );
   if (originalToken === undefined) delete process.env.POSTHOG_PERSONAL_API_KEY;
   else process.env.POSTHOG_PERSONAL_API_KEY = originalToken;
@@ -47,14 +50,14 @@ const dashboard = () => ({
   ],
 });
 
-test("the WAU route requests and normalizes the five saved dashboard tiles", async () => {
-  let request: { url?: string; authorization?: string; accept?: string } = {};
+test("the WAU route answers from PostHog's cache and refreshes it in the background", async () => {
+  const requests: { url?: string; authorization?: string; accept?: string }[] = [];
   const base = await upstream((req, res) => {
-    request = {
+    requests.push({
       url: req.url,
       authorization: req.headers.authorization,
       accept: req.headers.accept,
-    };
+    });
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(dashboard()));
   });
@@ -62,18 +65,24 @@ test("the WAU route requests and normalizes the five saved dashboard tiles", asy
 
   const response = await fetch(`http://127.0.0.1:${running.port}/wau.json`);
   const body = await response.json();
+  while (requests.length < 2) await sleep(5);
 
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("no-store");
-  expect(request.authorization).toBe("Bearer test-posthog-token");
-  expect(request.accept).toBe("application/json");
-  const url = new URL(request.url!, base);
-  expect(url.pathname).toBe("/api/projects/196853/dashboards/1468050/run_insights/");
-  expect(url.searchParams.get("tile_ids")).toBe(
-    "7119738,7119740,7122309,10992630,7119735",
-  );
-  expect(url.searchParams.get("refresh")).toBe("blocking");
-  expect(url.searchParams.get("output_format")).toBe("json");
+  const urls = requests.map((request) => new URL(request.url!, base));
+  expect(urls.map((url) => url.searchParams.get("refresh")).sort()).toEqual([
+    "blocking",
+    "force_cache",
+  ]);
+  for (const [index, url] of urls.entries()) {
+    expect(requests[index].authorization).toBe("Bearer test-posthog-token");
+    expect(requests[index].accept).toBe("application/json");
+    expect(url.pathname).toBe("/api/projects/196853/dashboards/1468050/run_insights/");
+    expect(url.searchParams.get("tile_ids")).toBe(
+      "7119738,7119740,7122309,10992630,7119735",
+    );
+    expect(url.searchParams.get("output_format")).toBe("json");
+  }
   expect(body).toEqual({
     fetchedAt: expect.any(String),
     currentWau: 5906,
@@ -88,6 +97,18 @@ test("the WAU route requests and normalizes the five saved dashboard tiles", asy
     })),
   });
   expect(JSON.stringify(body)).not.toContain("test-posthog-token");
+});
+
+test("a slow PostHog recompute does not hold up the WAU route", async () => {
+  const base = await upstream((req, res) => {
+    // The background refresh never answers; the cached read does.
+    if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(dashboard()));
+  });
+  running = await startServer(0, { configPath, posthogApiBase: base, posthogTimeoutMs: 1000 });
+
+  expect((await fetch(`http://127.0.0.1:${running.port}/wau.json`)).status).toBe(200);
 });
 
 test("the WAU route is unavailable without a PostHog credential", async () => {
