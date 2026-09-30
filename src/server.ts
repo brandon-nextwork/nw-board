@@ -463,11 +463,20 @@ export async function startServer(port: number, options: Options = {}) {
       base,
     );
     url.searchParams.set("tile_ids", Object.values(WAU_TILES).join(","));
-    url.searchParams.set("refresh", "blocking");
     url.searchParams.set("output_format", "json");
+    const headers = { authorization: `Bearer ${token}`, accept: "application/json" };
+    // Since the insights' queries were rewritten, a recompute often takes longer than
+    // any timeout the kiosk can wait out. So answer from PostHog's cache, however old,
+    // and recompute in the background so the next 15-minute poll reads fresh numbers.
+    const warm = new URL(url);
+    warm.searchParams.set("refresh", "blocking");
+    fetch(warm, { headers, signal: AbortSignal.timeout(5 * 60_000) })
+      .then((response) => response.body?.cancel())
+      .catch((error) => console.warn(`WAU dashboard refresh failed: ${error}`));
+    url.searchParams.set("refresh", "force_cache");
     try {
       const response = await fetch(url, {
-        headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+        headers,
         signal: AbortSignal.timeout(options.posthogTimeoutMs ?? 60_000),
       });
       if (!response.ok) throw new Error(`PostHog returned ${response.status}`);
