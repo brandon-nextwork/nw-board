@@ -28,7 +28,9 @@ import wave
 # The level every clip is normalized to. Chosen as the loudest all three original
 # clips reach without a limiter: jetson.mp3 binds it, having the least headroom
 # relative to its loudness. Raising this means compressing peaks, which squashes
-# the clips and lifts their noise floors — measure before you move it.
+# the clips and lifts their noise floors — measure before you move it. That choice was
+# made on unweighted RMS; K-weighted, omg.mp3 and yo-pierre.mp3 sit at -15.3 and -16.0,
+# either side of it, so the target carried over unchanged.
 TARGET_RMS_DB = -15.81
 # The gain is computed on the decoded source, and the mp3 round trip then costs about
 # 0.4 dB — so the printed result lands a little under the target. It lands under by the
@@ -60,18 +62,44 @@ def db(x):
     return 20 * math.log10(x) if x > 0 else -99.0
 
 
+def k_weight(x, rate):
+    """ITU BS.1770 K-weighting: the ear hears bass as quieter than plain RMS says,
+    so an unweighted RMS match leaves bassy clips sounding quiet (mustard.mp3 sat
+    ~3 dB under its neighbours). Shelf boost above ~1.7 kHz, then a 38 Hz high-pass."""
+    k = math.tan(math.pi * 1681.974450955533 / rate)
+    vh = 10 ** (3.999843853973347 / 20)
+    vb, q = vh**0.4996667741545416, 0.7071752369554196
+    a0 = 1 + k / q + k * k
+    shelf = (
+        ((vh + vb * k / q + k * k) / a0, 2 * (k * k - vh) / a0, (vh - vb * k / q + k * k) / a0),
+        (2 * (k * k - 1) / a0, (1 - k / q + k * k) / a0),
+    )
+    k, q = math.tan(math.pi * 38.13547087602444 / rate), 0.5003270373238773
+    a0 = 1 + k / q + k * k
+    highpass = ((1, -2, 1), (2 * (k * k - 1) / a0, (1 - k / q + k * k) / a0))
+    for (b0, b1, b2), (a1, a2) in (shelf, highpass):
+        y, x1, x2, y1, y2 = [], 0.0, 0.0, 0.0, 0.0
+        for v in x:
+            o = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2, x1, y2, y1 = x1, v, y1, o
+            y.append(o)
+        x = y
+    return x
+
+
 def measure(samples, rate, channels):
-    """Peak, gated RMS and lead-in. Gating ignores the quiet tail and the silence."""
+    """Peak, gated K-weighted RMS and lead-in. Gating ignores the quiet tail and the silence."""
     mono = [
         (sum(samples[i : i + channels]) / channels) / 32768.0
         for i in range(0, len(samples), channels)
     ]
     peak = max(abs(v) for v in mono)
+    weighted = k_weight(mono, rate)
     block = int(rate * 0.05)
     blocks = [
         b
         for b in (
-            sum(v * v for v in mono[i : i + block]) / block
+            sum(v * v for v in weighted[i : i + block]) / block
             for i in range(0, len(mono) - block, block)
         )
         if b > 0
