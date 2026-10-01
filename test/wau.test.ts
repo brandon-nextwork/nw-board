@@ -111,6 +111,50 @@ test("a slow PostHog recompute does not hold up the WAU route", async () => {
   expect((await fetch(`http://127.0.0.1:${running.port}/wau.json`)).status).toBe(200);
 });
 
+test("only one PostHog recompute runs at a time", async () => {
+  let warms = 0;
+  const base = await upstream((req, res) => {
+    if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") {
+      warms += 1;
+      return;
+    }
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(dashboard()));
+  });
+  running = await startServer(0, { configPath, posthogApiBase: base });
+
+  await fetch(`http://127.0.0.1:${running.port}/wau.json`);
+  await fetch(`http://127.0.0.1:${running.port}/wau.json`);
+  await sleep(50);
+
+  expect(warms).toBe(1);
+});
+
+test.each([
+  ["an upstream error", (res: import("node:http").ServerResponse) => res.writeHead(500).end()],
+  [
+    "a missing tile",
+    (res: import("node:http").ServerResponse) =>
+      res.end(JSON.stringify({ results: dashboard().results.slice(0, 1) })),
+  ],
+])("the WAU route keeps the last good numbers through %s", async (_name, fail) => {
+  let broken = false;
+  const base = await upstream((req, res) => {
+    if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
+    res.setHeader("content-type", "application/json");
+    if (broken) fail(res);
+    else res.end(JSON.stringify(dashboard()));
+  });
+  running = await startServer(0, { configPath, posthogApiBase: base });
+
+  const good = await (await fetch(`http://127.0.0.1:${running.port}/wau.json`)).json();
+  broken = true;
+  const after = await fetch(`http://127.0.0.1:${running.port}/wau.json`);
+
+  expect(after.status).toBe(200);
+  expect(await after.json()).toEqual(good);
+});
+
 test("the WAU route is unavailable without a PostHog credential", async () => {
   delete process.env.POSTHOG_PERSONAL_API_KEY;
   running = await startServer(0, { configPath });
