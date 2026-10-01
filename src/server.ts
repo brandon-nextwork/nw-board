@@ -103,7 +103,7 @@ type Options = {
   newsTimeoutMs?: number;
   /** Root of the PostHog API; tests point this at a stub. */
   posthogApiBase?: string;
-  /** How long the WAU dashboard proxy waits for PostHog. */
+  /** How long the WAU dashboard proxy waits for PostHog's cached read. */
   posthogTimeoutMs?: number;
 };
 
@@ -451,6 +451,8 @@ export async function startServer(port: number, options: Options = {}) {
 
   // The credential stays on the server and the destination is fixed: the kiosk can
   // read the five saved insights, but it cannot turn this route into a general proxy.
+  let lastWau: ReturnType<typeof normalizeWauDashboard> | undefined;
+  let warming = false;
   app.get("/wau.json", async (_req, res) => {
     const token = process.env.POSTHOG_PERSONAL_API_KEY;
     if (!token) {
@@ -468,23 +470,32 @@ export async function startServer(port: number, options: Options = {}) {
     // Since the insights' queries were rewritten, a recompute often takes longer than
     // any timeout the kiosk can wait out. So answer from PostHog's cache, however old,
     // and recompute in the background so the next 15-minute poll reads fresh numbers.
-    const warm = new URL(url);
-    warm.searchParams.set("refresh", "blocking");
-    fetch(warm, { headers, signal: AbortSignal.timeout(5 * 60_000) })
-      .then((response) => response.body?.cancel())
-      .catch((error) => console.warn(`WAU dashboard refresh failed: ${error}`));
+    // One recompute at a time: reloads and Funnel viewers must not stack them.
+    if (!warming) {
+      warming = true;
+      const warm = new URL(url);
+      warm.searchParams.set("refresh", "blocking");
+      fetch(warm, { headers, signal: AbortSignal.timeout(5 * 60_000) })
+        .then((response) => response.body?.cancel())
+        .catch((error) => console.warn(`WAU dashboard refresh failed: ${error}`))
+        .finally(() => (warming = false));
+    }
     url.searchParams.set("refresh", "force_cache");
     try {
       const response = await fetch(url, {
         headers,
-        signal: AbortSignal.timeout(options.posthogTimeoutMs ?? 60_000),
+        signal: AbortSignal.timeout(options.posthogTimeoutMs ?? 15_000),
       });
       if (!response.ok) throw new Error(`PostHog returned ${response.status}`);
       const payload = await limitedText(response, "WAU dashboard response exceeds 1 MiB");
-      res.set("Cache-Control", "no-store").json(normalizeWauDashboard(JSON.parse(payload)));
+      lastWau = normalizeWauDashboard(JSON.parse(payload));
+      res.set("Cache-Control", "no-store").json(lastWau);
     } catch (error) {
       console.warn(`WAU dashboard unavailable: ${error}`);
-      res.sendStatus(502);
+      // The cached read sometimes hangs or misses a tile; one bad read should not turn
+      // the panel STALE, so serve the last good numbers under their own fetchedAt.
+      if (lastWau) res.set("Cache-Control", "no-store").json(lastWau);
+      else res.sendStatus(502);
     }
   });
 
