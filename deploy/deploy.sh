@@ -26,6 +26,12 @@ if ! git diff --quiet "$BEFORE" HEAD -- package.json package-lock.json; then
   npm ci
 fi
 
+# The units in /etc are copies install.sh made, so a pull alone never changes them.
+if ! git diff --quiet "$BEFORE" HEAD -- 'deploy/*.service' deploy/install.sh; then
+  echo "==> unit files changed, re-running install.sh"
+  deploy/install.sh
+fi
+
 echo "==> restarting server"
 # The pull may have changed the unit files; without this, systemd keeps running
 # the old ones and the deploy silently does nothing.
