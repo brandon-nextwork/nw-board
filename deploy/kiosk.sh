@@ -132,8 +132,12 @@ fi
 # every boot. The kiosk stores no credentials, so the keyring buys nothing.
 # The GPU flags are load-bearing on a Pi: under XWayland Chromium often falls
 # back to software WebGL (SwiftShader/llvmpipe) and the whole board runs in
-# slow motion. ozone-platform-hint=auto picks native Wayland when the session
-# has it, which is where V3D acceleration actually works.
+# slow motion. Native Wayland is where V3D acceleration actually works, so a
+# Wayland session (WAYLAND_DISPLAY, found above) gets --ozone-platform=wayland
+# outright: under labwc the softer ozone-platform-hint=auto can still land on
+# XWayland, which stutters (vsync errors). An X-only session keeps the hint.
+OZONE="--ozone-platform-hint=auto"
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then OZONE="--ozone-platform=wayland"; fi
 exec "$CHROMIUM" \
   --kiosk \
   --noerrdialogs \
@@ -143,7 +147,7 @@ exec "$CHROMIUM" \
   --check-for-update-interval=31536000 \
   --autoplay-policy=no-user-gesture-required \
   --password-store=basic \
-  --ozone-platform-hint=auto \
+  "$OZONE" \
   --ignore-gpu-blocklist \
   --enable-gpu-rasterization \
   --enable-zero-copy \

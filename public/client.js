@@ -140,6 +140,8 @@ fitToWindow();
 // ?fps: an on-TV diagnostic — frame rate plus which renderer WebGL actually got.
 // "V3D" means the Pi's GPU is doing the work; "SwiftShader"/"llvmpipe" means
 // software rendering and explains any slow motion better than guessing.
+// An average hides judder, so it also counts the frames that blew the 60Hz budget
+// (>25ms) and the worst one, per 5s. elapsedMS is the raw gap; deltaMS is capped.
 if (location.search.includes("fps")) {
   let rendererName = "unknown";
   try {
@@ -153,8 +155,20 @@ if (location.search.includes("fps")) {
   fpsText.position.set(8, 8);
   fpsText.zIndex = 1000;
   app.stage.addChild(fpsText);
+  let slow = 0;
+  let worst = 0;
+  let pacing = "…";
+  app.ticker.add((t) => {
+    if (t.elapsedMS > 25) slow++;
+    worst = Math.max(worst, t.elapsedMS);
+  });
   setInterval(() => {
-    fpsText.text = `${app.ticker.FPS.toFixed(0)} FPS — ${rendererName}`;
+    pacing = `${slow} slow / worst ${worst.toFixed(0)}ms (5s)`;
+    slow = 0;
+    worst = 0;
+  }, 5000);
+  setInterval(() => {
+    fpsText.text = `${app.ticker.FPS.toFixed(0)} FPS — ${rendererName} — ${pacing}`;
   }, 500);
 }
 
@@ -588,7 +602,9 @@ feedEmpty.position.set(24, 90);
 feedPanel.addChild(feedEmpty);
 
 // One row object per line, reused forever: a feed render retints and retexts them
-// rather than building and throwing away 14 rows of display objects.
+// rather than building and throwing away 14 rows of display objects. A row follows
+// the entry it shows, not its slot: `key` names that entry, so a new event slides
+// the old rows down a line instead of re-rasterising every Text on the panel.
 const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   const row = new Container();
   row.position.set(20, 84 + i * 54);
@@ -619,7 +635,7 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   title.position.set(0, 8); // x set per render, after the pill
   row.addChild(icon, kind, who, time, pill, title);
   feedPanel.addChild(row);
-  return { row, icon, kind, who, time, pillBg, pillText, pill, title };
+  return { row, icon, kind, who, time, pillBg, pillText, pill, title, key: null };
 });
 
 // --------------------------------------------------------------------------------
@@ -783,7 +799,7 @@ async function loadWau() {
 const TICKER_Y = 968;
 const TICKER_H = 96;
 const TICKER_GAP = 110;
-const TICKER_SPEED = 0.09; // px per ms — a lap of one 1920px screen every ~21s
+const TICKER_STEP = 2; // px per 60Hz frame — 120 px/s, a lap of one 1920px screen every 16s
 
 // Framed like the marquee and the Feed panel: same side margins, same border.
 const tickerStrip = new Container();
@@ -865,37 +881,65 @@ function fitText(target, full, maxWidth) {
 }
 const clock = (at) => new Date(at).toTimeString().slice(0, 5);
 
+// Everything a row draws, and nothing else. Not the whole entry: a live event is
+// stamped with this display's clock and may carry audible/teammate, while the
+// snapshot that follows it carries the server's `at` and neither flag — so the
+// same event would key differently and be retexted twice. The minute is what the
+// row shows of `at`, which keeps the two copies equal.
+const feedKey = (entry) =>
+  JSON.stringify([entry.type, entry.repo, entry.number, entry.title, entry.actor, clock(entry.at)]);
+
 function renderFeed() {
   feed = feed.filter((entry) => Date.now() - entry.at < DAY_MS);
   feedEmpty.visible = feed.length === 0;
-  for (let i = 0; i < FEED_ROWS; i++) {
-    const entry = feed[feed.length - 1 - i];
-    const { row, icon, kind, who, time, pillBg, pillText, pill, title } = feedRows[i];
-    row.visible = Boolean(entry);
-    if (!entry) continue;
-    const style = EVENTS[entry.type] ?? { name: entry.type, color: C.dim, icon: "star" };
-    icon.texture = pixelTexture(style.icon);
-    kind.text = style.name;
-    kind.style.fill = style.color;
-    // Clipped to the characters that fit each column at this font size rather than
-    // wrapped; a Feed row is a glance, not a read.
-    // Tracked monospace fits one character fewer before the time column.
-    who.text = clip(entry.actor ?? "", ARCADE ? 11 : 12);
-    time.text = clock(entry.at);
-    pillText.text = clip(entry.repo.split("/").pop(), 16);
-    pillText.position.set(11, 6);
-    const pillWidth = Math.ceil(pillText.width) + 22;
-    pillBg
-      .clear()
-      .roundRect(0, 0, pillWidth, 34, 6)
-      .fill({ color: C.white, alpha: 0.06 })
-      .stroke({ color: C.dim, alpha: 0.7, width: 1.5 });
-    // Title starts just past the pill and runs to the panel edge.
-    title.position.x = pill.position.x + pillWidth + 14;
-    fitText(title, `#${entry.number}  ${entry.title}`, 1828 - title.position.x);
-    // Older entries fade toward the bottom of the panel, so the eye lands on the top.
-    row.alpha = 1 - i * 0.045;
+  const visible = feed.slice(-FEED_ROWS).reverse();
+  const keys = visible.map(feedKey);
+  // Rows already showing a visible entry keep it; the rest are free to retext.
+  const placed = [];
+  const free = [];
+  for (const slot of feedRows) {
+    const i = keys.findIndex((key, j) => key === slot.key && !placed[j]);
+    if (i >= 0) placed[i] = slot;
+    else free.push(slot);
   }
+  visible.forEach((entry, i) => {
+    const slot = placed[i] ?? free.pop();
+    if (!placed[i]) {
+      slot.key = keys[i];
+      retextRow(slot, entry);
+    }
+    slot.row.position.y = 84 + i * 54;
+    // Older entries fade toward the bottom of the panel, so the eye lands on the top.
+    slot.row.alpha = 1 - i * 0.045;
+    slot.row.visible = true;
+  });
+  for (const slot of free) {
+    slot.row.visible = false;
+    slot.key = null;
+  }
+}
+
+function retextRow({ icon, kind, who, time, pillBg, pillText, pill, title }, entry) {
+  const style = EVENTS[entry.type] ?? { name: entry.type, color: C.dim, icon: "star" };
+  icon.texture = pixelTexture(style.icon);
+  kind.text = style.name;
+  kind.style.fill = style.color;
+  // Clipped to the characters that fit each column at this font size rather than
+  // wrapped; a Feed row is a glance, not a read.
+  // Tracked monospace fits one character fewer before the time column.
+  who.text = clip(entry.actor ?? "", ARCADE ? 11 : 12);
+  time.text = clock(entry.at);
+  pillText.text = clip(entry.repo.split("/").pop(), 16);
+  pillText.position.set(11, 6);
+  const pillWidth = Math.ceil(pillText.width) + 22;
+  pillBg
+    .clear()
+    .roundRect(0, 0, pillWidth, 34, 6)
+    .fill({ color: C.white, alpha: 0.06 })
+    .stroke({ color: C.dim, alpha: 0.7, width: 1.5 });
+  // Title starts just past the pill and runs to the panel edge.
+  title.position.x = pill.position.x + pillWidth + 14;
+  fitText(title, `#${entry.number}  ${entry.title}`, 1828 - title.position.x);
 }
 
 // An idle board still has to age entries out; a minute of granularity is plenty.
@@ -915,7 +959,9 @@ function renderHeadlines(values) {
   tickerKey = key;
   for (const old of tickerContent.removeChildren()) old.destroy({ children: true });
   const first = tickerSequence(headlines);
-  tickerLoop = first.width;
+  // A whole number, so the copies sit on whole pixels and a wrap never lands the
+  // strip between two.
+  tickerLoop = Math.ceil(first.width);
   // Enough copies that the strip never shows a gap: the screen plus one full loop.
   // ponytail: rebuilt wholesale every 15 minutes — cheap at news-feed frequency.
   const copies = Math.max(2, Math.ceil(W / tickerLoop) + 1);
@@ -926,7 +972,7 @@ function renderHeadlines(values) {
     seq.position.x = i * tickerLoop;
     tickerContent.addChild(seq);
   }
-  if (tickerX <= -tickerLoop) tickerX = 0;
+  if (tickerContent.x <= -tickerLoop) tickerContent.x = 0;
 }
 
 let headlines = [];
@@ -966,13 +1012,17 @@ async function loadHeadlines() {
   }
 }
 
-// The float accumulator scrolls; the container lands on whole pixels — fractional
-// positions under pixelated rendering read as shimmer, not motion.
-let tickerX = 0;
+// Whole-pixel steps locked to the frame: the strip only ever sits on whole pixels
+// (fractional positions under pixelated rendering read as shimmer, not motion),
+// and every 60Hz frame moves exactly TICKER_STEP. Rounding a px-per-ms speed
+// instead gave 1,2,1,2px steps — a steady judder. A dropped frame takes the steps
+// it missed, so the speed holds.
+// ponytail: counts frames at 60Hz, so a 120Hz dev monitor scrolls at double speed;
+// the Pi's TV is 60Hz. Derive the step from the measured refresh rate if that matters.
 app.ticker.add((t) => {
-  tickerX -= TICKER_SPEED * t.deltaMS;
-  if (tickerX <= -tickerLoop) tickerX += tickerLoop;
-  tickerContent.x = Math.round(tickerX);
+  const frames = Math.max(1, Math.round(t.deltaMS / (1000 / 60)));
+  tickerContent.x -= TICKER_STEP * frames;
+  if (tickerContent.x <= -tickerLoop) tickerContent.x += tickerLoop;
 });
 
 // Today's MVP on the marquee. A lead change is an event in its own right, so the name
