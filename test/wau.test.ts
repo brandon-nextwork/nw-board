@@ -317,3 +317,36 @@ test("a proxied POST (Funnel adds X-Forwarded-For) cannot replay the Target Hit"
   expect(response.status).toBe(403);
   expect(messages.filter((message) => message.type === "wau-target-hit")).toEqual([]);
 });
+
+test("a display connecting after a Target Hit is told the board wears the Arcade Theme", async () => {
+  running = await startServer(0, { configPath, now: () => thursdayAt(10) });
+  const before = await connectedDisplay(running.port);
+  await fetch(`http://127.0.0.1:${running.port}/wau-target-hit`, { method: "POST" });
+  const after = await connectedDisplay(running.port);
+  await sleep(50);
+  before.ws.close();
+  after.ws.close();
+  expect(before.messages[0]).toMatchObject({ type: "snapshot", arcade: false });
+  expect(after.messages[0]).toMatchObject({ type: "snapshot", arcade: true });
+});
+
+test("a PostHog crossing also puts the board in the Arcade Theme", async () => {
+  await targetHits(["95%", "100%"]);
+  const { ws, messages } = await connectedDisplay(running!.port);
+  await sleep(50);
+  ws.close();
+  expect(messages[0]).toMatchObject({ type: "snapshot", arcade: true });
+});
+
+test("the Arcade Theme ends at local midnight with one fresh snapshot", async () => {
+  let clock = new Date(2026, 7, 13, 23, 30).getTime(); // Thursday, late
+  running = await startServer(0, { configPath, now: () => clock, tickMs: 10 });
+  await fetch(`http://127.0.0.1:${running.port}/wau-target-hit`, { method: "POST" });
+  const { ws, messages } = await connectedDisplay(running.port);
+  await sleep(50);
+  clock = new Date(2026, 7, 14, 0, 0, 30).getTime(); // just past midnight
+  await sleep(100);
+  ws.close();
+  const snapshots = messages.filter((message) => message.type === "snapshot");
+  expect(snapshots.map((snapshot) => snapshot.arcade)).toEqual([true, false]);
+});

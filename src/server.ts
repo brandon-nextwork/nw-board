@@ -455,6 +455,11 @@ export async function startServer(port: number, options: Options = {}) {
   let warming = false;
   let wauAsked = 0;
   let wauApplied = 0;
+  // A Target Hit puts the board in the Arcade Theme until the next local midnight.
+  // ponytail: in-memory, so a server restart mid-day drops the board back to the
+  // kernel theme; persist arcadeUntil if that matters.
+  let arcadeUntil = 0;
+  const startArcade = () => (arcadeUntil = new Date(now()).setHours(24, 0, 0, 0));
   app.get("/wau.json", async (_req, res) => {
     const asked = ++wauAsked;
     const token = process.env.POSTHOG_PERSONAL_API_KEY;
@@ -507,6 +512,7 @@ export async function startServer(port: number, options: Options = {}) {
         console.log(
           `WAU target hit: ${next.targetPercent}% sound=${audible ? "clip" : "silent (quiet hours)"}`,
         );
+        startArcade();
         broadcast({
           type: "wau-target-hit",
           audible,
@@ -537,6 +543,7 @@ export async function startServer(port: number, options: Options = {}) {
       res.sendStatus(403);
       return;
     }
+    startArcade();
     broadcast({
       type: "wau-target-hit",
       audible: soundAllowed(),
@@ -555,13 +562,16 @@ export async function startServer(port: number, options: Options = {}) {
   //   on connect: {"type":"snapshot","feed":[{<domain event>, "at":<ms>}, ...],
   //                "openPrs":[{repo, number, title, actor}, ...],
   //                "mvp":{"names":[<string>, ...],"count":<number>}|null,
-  //                "devDeploy":{"actor":<string>,"at":<ms>,"repo":<string>,"run":<number>}|null}
+  //                "devDeploy":{"actor":<string>,"at":<ms>,"repo":<string>,"run":<number>}|null,
+  //                "arcade":true|false}
   //               feed is oldest first and holds the last 24h, each entry stamped with
   //               the server time it happened; openPrs is the current set of open PRs
   //               (state, so no 24h expiry) — what's in flight now, each with the
   //               GitHub login of its author; mvp names all Actors tied for today's
   //               lead, null until today has an event; devDeploy is the last teammate
-  //               to deploy to dev, null until one has.
+  //               to deploy to dev, null until one has; arcade is whether the board wears
+  //               the Arcade Theme — on from a Target Hit until local midnight, when a
+  //               fresh snapshot carries it off.
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title, actor}
   //               actor is the GitHub login of whoever did it (the merger for a
   //               pr-merged, the reviewer for a review, the commenter for a comment),
@@ -587,6 +597,7 @@ export async function startServer(port: number, options: Options = {}) {
     openPrs,
     mvp: todaysMvp(),
     devDeploy,
+    arcade: now() < arcadeUntil,
   });
   wss.on("connection", (socket) => socket.send(JSON.stringify(snapshot())));
 
@@ -914,8 +925,12 @@ export async function startServer(port: number, options: Options = {}) {
     // The MVP is derived on read, so a display connected across local midnight would
     // keep yesterday's leader until something else happened. Remembering the day we
     // last pushed is what keeps this to one broadcast rather than one per tick.
-    if (startOfDay(at.getTime()) !== mvpDay) {
+    // The Arcade Theme ends at that same midnight; checked on its own so a clock that
+    // jumps doesn't strand it, and folded into the one push so the rollover stays one.
+    const arcadeOver = arcadeUntil !== 0 && at.getTime() >= arcadeUntil;
+    if (startOfDay(at.getTime()) !== mvpDay || arcadeOver) {
       mvpDay = startOfDay(at.getTime());
+      if (arcadeOver) arcadeUntil = 0;
       broadcast(snapshot());
     }
     const hhmm = `${at.getHours()}`.padStart(2, "0") + ":" + `${at.getMinutes()}`.padStart(2, "0");
