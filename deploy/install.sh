@@ -40,6 +40,26 @@ WorkingDirectory=$REPO_DIR
 ExecStart=$NPM start
 EOF
 
+echo "==> Holding the server at boot until NTP has set the clock"
+# Ask whichever NTP client is running: systemd-time-wait-sync only knows about
+# timesyncd, so under chrony it would wait out its whole timeout every boot.
+WAIT_UNIT=""
+if systemctl is-active --quiet chrony.service; then
+  WAIT_UNIT=chrony-wait.service
+elif systemctl is-active --quiet systemd-timesyncd.service; then
+  WAIT_UNIT=systemd-time-wait-sync.service
+fi
+if [ -n "$WAIT_UNIT" ] && systemctl cat "$WAIT_UNIT" >/dev/null 2>&1; then
+  # Capped: with no network the sync never comes, and a board on a stale clock
+  # beats no board. The server only Wants= the sync, so a timeout still starts it.
+  sudo install -d -m 755 "/etc/systemd/system/$WAIT_UNIT.d"
+  printf '[Service]\nTimeoutStartSec=90\n' |
+    sudo tee "/etc/systemd/system/$WAIT_UNIT.d/10-pr-arcade.conf" >/dev/null
+  sudo systemctl enable "$WAIT_UNIT"
+else
+  echo "    no timesyncd or chrony running — the server will start on whatever the clock says" >&2
+fi
+
 echo "==> Installing kiosk unit"
 install -D -m 644 "$REPO_DIR/deploy/pr-arcade-kiosk.service" \
   "$USER_UNIT_DIR/pr-arcade-kiosk.service"
