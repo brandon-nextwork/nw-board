@@ -57,11 +57,11 @@ test.for([["nope"], ["index"], ["../x"], ["Kernel"], [42]])(
   },
 );
 
-test("POST /theme/:name swaps the Theme and DELETE /theme puts config.theme back", async () => {
+test("POST /theme?name= swaps the Theme and DELETE /theme puts config.theme back", async () => {
   running = await startServer(0, { configPath: config("arcade"), now: () => thursdayAt(10) });
   const { ws, messages } = await connectedDisplay(running.port);
   await sleep(50);
-  expect((await call("POST", "/theme/kernel")).status).toBe(204);
+  expect((await call("POST", "/theme?name=kernel")).status).toBe(204);
   await sleep(50);
   expect((await call("DELETE", "/theme")).status).toBe(204);
   await sleep(50);
@@ -69,25 +69,29 @@ test("POST /theme/:name swaps the Theme and DELETE /theme puts config.theme back
   expect(themes(messages)).toEqual(["arcade", "kernel", "arcade"]);
 });
 
-test.for([["nope"], ["index"], ["..%2Fkernel"]])(
-  "POST /theme/%s names no Theme: 404, nothing broadcast",
-  async ([name]) => {
-    running = await startServer(0, { configPath: config(), now: () => thursdayAt(10) });
-    const { ws, messages } = await connectedDisplay(running.port);
-    const response = await call("POST", `/theme/${name}`);
-    await sleep(50);
-    ws.close();
-    expect(response.status).toBe(404);
-    expect(themes(messages)).toEqual(["kernel"]);
-  },
-);
+test.for([
+  ["?name=nope", 404],
+  ["?name=index", 404],
+  ["?name=..%2Fkernel", 404],
+  ["", 400],
+  ["?permanent", 400],
+  ["?name=kernel&name=arcade", 400],
+])("POST /theme%s names no Theme: %i, nothing broadcast", async ([query, status]) => {
+  running = await startServer(0, { configPath: config(), now: () => thursdayAt(10) });
+  const { ws, messages } = await connectedDisplay(running.port);
+  const response = await call("POST", `/theme${query}`);
+  await sleep(50);
+  ws.close();
+  expect(response.status).toBe(status);
+  expect(themes(messages)).toEqual(["kernel"]);
+});
 
 test("a proxied request (Funnel adds X-Forwarded-For) cannot touch the Theme", async () => {
   running = await startServer(0, { configPath: config(), now: () => thursdayAt(10) });
   const { ws, messages } = await connectedDisplay(running.port);
   const proxied = { "x-forwarded-for": "1.2.3.4" };
-  const post = await call("POST", "/theme/arcade", proxied);
-  const permanent = await call("POST", "/theme/arcade?permanent", proxied);
+  const post = await call("POST", "/theme?name=arcade", proxied);
+  const permanent = await call("POST", "/theme?name=arcade&permanent", proxied);
   const remove = await call("DELETE", "/theme", proxied);
   await sleep(50);
   ws.close();
@@ -100,7 +104,7 @@ test("a Target Hit overrides a hand-set Theme, and midnight returns config.theme
   // must replace it, and midnight must not bring it back.
   let clock = thursdayAt(23, 30);
   running = await startServer(0, { configPath: config("arcade"), now: () => clock, tickMs: 10 });
-  await call("POST", "/theme/kernel");
+  await call("POST", "/theme?name=kernel");
   const { ws, messages } = await connectedDisplay(running.port);
   await sleep(50);
   await call("POST", "/wau-target-hit");
@@ -115,7 +119,7 @@ test("a Target Hit overrides a hand-set Theme, and midnight returns config.theme
 test("a hand-set Theme comes off at local midnight", async () => {
   let clock = thursdayAt(23, 30);
   running = await startServer(0, { configPath: config(), now: () => clock, tickMs: 10 });
-  await call("POST", "/theme/arcade");
+  await call("POST", "/theme?name=arcade");
   const { ws, messages } = await connectedDisplay(running.port);
   await sleep(50);
   clock = new Date(2026, 7, 14, 0, 0, 30).getTime();
@@ -131,7 +135,7 @@ test("?permanent rewrites config.json, beats a Target Hit, and survives a restar
   await call("POST", "/wau-target-hit");
   const { ws, messages } = await connectedDisplay(running.port);
   await sleep(50);
-  expect((await call("POST", "/theme/neobrutal?permanent")).status).toBe(204);
+  expect((await call("POST", "/theme?name=neobrutal&permanent")).status).toBe(204);
   await sleep(50);
   ws.close();
   expect(themes(messages)).toEqual(["arcade", "neobrutal"]);
@@ -152,6 +156,6 @@ test("?permanent naming no Theme is a 404 and leaves config.json alone", async (
   const path = config("arcade");
   const before = readFileSync(path, "utf8");
   running = await startServer(0, { configPath: path, now: () => thursdayAt(10) });
-  expect((await call("POST", "/theme/nope?permanent")).status).toBe(404);
+  expect((await call("POST", "/theme?name=nope&permanent")).status).toBe(404);
   expect(readFileSync(path, "utf8")).toBe(before);
 });

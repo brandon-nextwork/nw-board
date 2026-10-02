@@ -91,13 +91,13 @@ It refuses to start on a name with no file.
 Switch from the machine running the server:
 
 ```sh
-curl -X POST http://127.0.0.1:3000/theme/neobrutal              # wear it until local midnight
-curl -X POST 'http://127.0.0.1:3000/theme/neobrutal?permanent'  # make it the default
-curl -X DELETE http://127.0.0.1:3000/theme                      # back to the default now
+curl -X POST 'http://127.0.0.1:3000/theme?name=neobrutal'            # wear it until local midnight
+curl -X POST 'http://127.0.0.1:3000/theme?name=neobrutal&permanent'  # make it the default
+curl -X DELETE http://127.0.0.1:3000/theme                           # back to the default now
 ```
 
 A live switch lasts until local midnight, `DELETE /theme`, or a server restart,
-then the default comes back. `?permanent` rewrites `"theme"` in `config.json`, so
+then the default comes back. `&permanent` rewrites `"theme"` in `config.json`, so
 it survives restarts, and shows at once over any live switch. A Weekly WAU target
 hit puts on `arcade` until local midnight, the same way as a live switch. Whichever
 was set last wins.

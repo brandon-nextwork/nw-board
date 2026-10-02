@@ -253,7 +253,7 @@ export async function startServer(port: number, options: Options = {}) {
 
   // The Theme the board wears when nothing live overrides it. Optional: existing Pi
   // installs keep config.json across deploys, and they wore kernel before this key.
-  // A POST /theme/:name?permanent rewrites both this and the file.
+  // A POST /theme?name=<name>&permanent rewrites both this and the file.
   let defaultTheme: string = config.theme ?? "kernel";
   if (!isTheme(defaultTheme))
     throw new Error(`${configPath}: theme must name a file in public/themes/, e.g. "kernel"`);
@@ -477,7 +477,7 @@ export async function startServer(port: number, options: Options = {}) {
   let wauAsked = 0;
   let wauApplied = 0;
   // The Theme worn now: config.theme, unless a live override still holds. Every live
-  // override — a Target Hit's Arcade Theme or a POST /theme/:name — lasts until the
+  // override — a Target Hit's Arcade Theme or a POST /theme?name= — lasts until the
   // next local midnight or a DELETE /theme. Last write wins, and a ?permanent switch
   // counts as a write: it clears `live` so the new config.theme shows at once.
   // ponytail: `live` is in-memory, so a restart drops it; it only lasts the day anyway.
@@ -580,10 +580,15 @@ export async function startServer(port: number, options: Options = {}) {
     res.sendStatus(204);
   });
 
-  // Swaps the Theme by hand until local midnight (or DELETE /theme). With ?permanent
-  // it becomes config.theme instead, written to config.json so it survives restarts.
-  app.post("/theme/:name", piOnly, (req, res) => {
-    const name = req.params.name;
+  // Swaps the Theme to ?name= by hand until local midnight (or DELETE /theme). With
+  // &permanent it becomes config.theme instead, written to config.json so it survives
+  // restarts. A missing or repeated ?name is a 400; one naming no Theme is a 404.
+  app.post("/theme", piOnly, (req, res) => {
+    const name = req.query.name;
+    if (typeof name !== "string") {
+      res.sendStatus(400);
+      return;
+    }
     if (!isTheme(name)) {
       res.sendStatus(404);
       return;
@@ -630,9 +635,9 @@ export async function startServer(port: number, options: Options = {}) {
   //               lead, null until today has an event; devDeploy is the last teammate
   //               to deploy to dev, null until one has; theme names the Theme the board
   //               wears (a file in public/themes/) — config.theme, else a live override:
-  //               "arcade" from a Target Hit or whatever a loopback POST /theme/:name
+  //               "arcade" from a Target Hit or whatever a loopback POST /theme?name=
   //               set, until local midnight (when a fresh snapshot carries it off) or a
-  //               DELETE /theme. POST /theme/:name?permanent rewrites config.theme
+  //               DELETE /theme. POST /theme?name=<name>&permanent rewrites config.theme
   //               itself. Each change is pushed as a fresh snapshot.
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title, actor}
   //               actor is the GitHub login of whoever did it (the merger for a
