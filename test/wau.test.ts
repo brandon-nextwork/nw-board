@@ -290,3 +290,30 @@ test("a slow read of older cache landing after the crossing does not re-arm it",
   ws.close();
   expect(messages.filter((message) => message.type === "wau-target-hit")).toHaveLength(1);
 });
+
+test("a loopback POST replays the Target Hit", async () => {
+  running = await startServer(0, { configPath, now: () => thursdayAt(10) });
+  const { ws, messages } = await connectedDisplay(running.port);
+  const response = await fetch(`http://127.0.0.1:${running.port}/wau-target-hit`, {
+    method: "POST",
+  });
+  await sleep(50);
+  ws.close();
+  expect(response.status).toBe(204);
+  expect(messages.filter((message) => message.type === "wau-target-hit")).toEqual([
+    { type: "wau-target-hit", audible: true },
+  ]);
+});
+
+test("a proxied POST (Funnel adds X-Forwarded-For) cannot replay the Target Hit", async () => {
+  running = await startServer(0, { configPath, now: () => thursdayAt(10) });
+  const { ws, messages } = await connectedDisplay(running.port);
+  const response = await fetch(`http://127.0.0.1:${running.port}/wau-target-hit`, {
+    method: "POST",
+    headers: { "x-forwarded-for": "1.2.3.4" },
+  });
+  await sleep(50);
+  ws.close();
+  expect(response.status).toBe(403);
+  expect(messages.filter((message) => message.type === "wau-target-hit")).toEqual([]);
+});
