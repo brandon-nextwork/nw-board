@@ -21,18 +21,24 @@ import {
 } from "./vendor/pixi.min.mjs";
 import { play, playAmbient, resumeAudio } from "./audio.js";
 import { KERNEL } from "./kernel-tokens.gen.js";
+import { ARCADE_C } from "./arcade-theme.js";
 
 // The scene is authored at 1080p and scaled to fit whatever the TV reports, so the
 // layout is fixed numbers rather than a responsive system nobody will ever resize.
 const W = 1920;
 const H = 1080;
 
+// ?arcade: the Arcade Theme, the board's pre-reskin look, worn from a WAU Target
+// Hit until local midnight. Read once here and baked into everything built from
+// `C` and label(); switching themes reloads the page (see applyTheme below).
+const ARCADE = new URLSearchParams(location.search).has("arcade");
+
 // The board's semantic palette, resolved from the brand kernel. Names stay
 // arcade-local; values come from kernel-tokens.gen.js only. The dark ground is
 // the kernel's leather-warm dark family — never blue-black. Accents follow the
 // categorical convention; red and plum ride the 400 rungs because their 500s
 // fall under 4.5:1 against leather at TV distance.
-const C = {
+const C = ARCADE ? ARCADE_C : {
   bg: KERNEL["surface-dark"],
   panel: KERNEL["surface-dark-raised"],
   panelDeep: KERNEL["brand-900"],
@@ -46,7 +52,16 @@ const C = {
   orange: KERNEL["accent-pumpkin"],
   info: KERNEL["information-400"],
   white: KERNEL["warm-white"],
+  // Theme keys: spots where the two themes differ by role, not just by value.
+  marqueeEdge: KERNEL["brand-700"],
+  heroInk: KERNEL["text-on-dark"],
+  pixelDim: KERNEL["brand-600"],
+  titleShadow: KERNEL["surface-dark"],
+  scanline: KERNEL["surface-dark"],
+  scanlineAlpha: 0.3,
 };
+// The arcade letterbox was black; a keyword keeps hex out of this file.
+if (ARCADE) document.body.style.background = "black";
 
 // Brand type, vendored in public/fonts. Display moments (>=54px: takeover
 // banners, marquee title, MVP name, chime) get Suisse Neue with the kernel's
@@ -54,16 +69,18 @@ const C = {
 // kernel hard-blocks letter-spacing on UI text.
 const FONT_UI = '"FK Grotesk Neue", system-ui, sans-serif';
 const FONT_DISPLAY = '"Suisse Neue", "FK Grotesk Neue", system-ui, sans-serif';
+// The Arcade Theme's type: one monospace face, tracked wide, at every size.
+const FONT_ARCADE = 'ui-monospace, "DejaVu Sans Mono", "Courier New", monospace';
 const label = (text, fontSize, fill, extra) => {
   const display = fontSize >= 54;
   return new Text({
     text,
     style: {
-      fontFamily: display ? FONT_DISPLAY : FONT_UI,
-      fontWeight: "500",
+      fontFamily: ARCADE ? FONT_ARCADE : display ? FONT_DISPLAY : FONT_UI,
+      fontWeight: ARCADE ? "normal" : "500",
       fontSize,
       fill,
-      letterSpacing: display ? Math.round(fontSize * -0.01) : 0,
+      letterSpacing: ARCADE ? 2 : display ? Math.round(fontSize * -0.01) : 0,
       ...extra,
     },
   });
@@ -83,7 +100,8 @@ const CELEBRATIONS = new Set(["pr-merged", "review-approved"]);
 // lazy @font-face loading on its own — so load the brand faces explicitly before
 // any Text exists. Never let a missing file hang the kiosk: after 3s the
 // system-ui fallbacks in the FONT stacks take over and the board boots anyway.
-try {
+// The Arcade Theme never uses the brand faces, so it skips the wait.
+if (!ARCADE) try {
   await Promise.race([
     Promise.all([
       document.fonts.load('500 62px "Suisse Neue"'),
@@ -161,7 +179,7 @@ const PX = {
   b: C.ink,
   r: C.red,
   m: C.magenta,
-  d: KERNEL["brand-600"],
+  d: C.pixelDim,
   k: C.bg,
 };
 
@@ -288,6 +306,20 @@ const SPRITES = {
     "................",
     "................",
   ],
+  // The Arcade Theme's crown on the logo. A transparent border, because
+  // pixelTexture only outlines inside the grid: without it the outer edge of the
+  // art would get no dark outline.
+  crown: [
+    "...............",
+    ".w.....w.....w.",
+    ".yy...yyy...yy.",
+    ".yyy.yyyyy.yyy.",
+    ".yyyyyyyyyyyyy.",
+    ".ymyyyyryyyygy.",
+    ".yyyyyyyyyyyyy.",
+    ".ooooooooooooo.",
+    "...............",
+  ],
 };
 
 // Textures are baked once and shared by every sprite that uses them; nothing in an
@@ -382,7 +414,7 @@ function buildBackground() {
   // Leather rather than black: dimming toward the ground color keeps every
   // darkened pixel in the warm family. Leather is lighter, so the alpha rises.
   for (let y = 0; y < H; y += 4) scanlines.rect(0, y, W, 2);
-  scanlines.fill({ color: C.bg, alpha: 0.3 });
+  scanlines.fill({ color: C.scanline, alpha: C.scanlineAlpha });
   scanlines.eventMode = "none";
   world.addChild(scanlines);
 
@@ -427,13 +459,13 @@ marquee.addChild(
   new Graphics()
     .roundRect(0, 0, 1872, 168, 14)
     .fill({ color: C.panelDeep })
-    .stroke({ width: 5, color: C.panelEdge }),
+    .stroke({ width: 5, color: C.marqueeEdge }),
 );
 
 // Paper on dark, not an accent: the hero recedes into the cabinet and lets the
 // canary bulbs and MVP name carry the marquee's 5% of color.
-const title = label("NEXTWORK ARCADE", 62, C.ink, {
-  dropShadow: { color: C.bg, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 0.9 },
+const title = label("NEXTWORK ARCADE", 62, C.heroInk, {
+  dropShadow: { color: C.titleShadow, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 0.9 },
 });
 title.position.set(48, 52);
 marquee.addChild(title);
@@ -499,6 +531,16 @@ Assets.load({
     logo.scale.set(LOGO_HEIGHT / texture.height);
     logo.position.set(48, 84);
     marquee.addChild(logo);
+    if (ARCADE) {
+      // Tipped onto the top-left of the roundel, over the bulbs: 15x9 art at
+      // 16/3 draws 80x48, its top-left corner 21px left of and 24px above the
+      // logo's, rotated 14 degrees counter-clockwise about that corner.
+      const crown = new Sprite(pixelTexture("crown"));
+      crown.scale.set(16 / 3);
+      crown.position.set(48 - 21, 84 - LOGO_HEIGHT / 2 - 24);
+      crown.rotation = (-14 * Math.PI) / 180;
+      marquee.addChild(crown);
+    }
     title.visible = false;
     // Clear of the logo's right-hand clear space, which ends at 399.5.
     insertCoin.anchor.set(0, 0.5);
@@ -569,7 +611,7 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   time.position.set(556, 8);
   // Repo pill: a small rounded chip redrawn per render (width follows the text).
   const pillBg = new Graphics();
-  const pillText = label("", 20, C.dim);
+  const pillText = label("", 20, C.dim, ARCADE ? { letterSpacing: 1 } : undefined);
   const pill = new Container();
   pill.position.set(580, 6);
   pill.addChild(pillBg, pillText);
@@ -636,7 +678,9 @@ const dayLabels = Array.from({ length: 7 }, (_, index) => {
 });
 const barValues = [0, 1].map(() =>
   Array.from({ length: 7 }, () => {
-    const value = label("", 14, C.dim);
+    // Untracked in the Arcade Theme too: tracked monospace runs "2.4k" wider than
+    // its 38px bar and into the neighbour's value.
+    const value = label("", 14, C.dim, ARCADE ? { letterSpacing: 0 } : undefined);
     value.anchor.set(0.5, 0);
     wauChart.addChild(value);
     return value;
@@ -835,7 +879,8 @@ function renderFeed() {
     kind.style.fill = style.color;
     // Clipped to the characters that fit each column at this font size rather than
     // wrapped; a Feed row is a glance, not a read.
-    who.text = clip(entry.actor ?? "", 12);
+    // Tracked monospace fits one character fewer before the time column.
+    who.text = clip(entry.actor ?? "", ARCADE ? 11 : 12);
     time.text = clock(entry.at);
     pillText.text = clip(entry.repo.split("/").pop(), 16);
     pillText.position.set(11, 6);
@@ -1118,8 +1163,46 @@ function celebrate(type, event = {}, audible = false) {
   playNextCelebration();
 }
 
+// Theme switches are reloads with ?arcade toggled, held until no takeover is
+// playing or queued so a reload never cuts one off. Only a theme that differs
+// from the one this page loaded with triggers one, so a reload cannot loop.
+let wantArcade = ARCADE;
+// Day Chimes on screen: a reload would cut the bell off mid-sound.
+let chimes = 0;
+function applyTheme() {
+  // Staying put (a switch called off before it happened, or the reload just
+  // landed): any held Target Hit plays here rather than being lost.
+  if (wantArcade === ARCADE) {
+    playHeldCelebration();
+    return;
+  }
+  if (takeoverBusy || pending.length > 0 || chimes > 0) return;
+  // Split by hand rather than URLSearchParams, which would rewrite ?fps as ?fps=.
+  const params = location.search
+    .slice(1)
+    .split("&")
+    .filter((param) => param && param.split("=")[0] !== "arcade");
+  if (wantArcade) params.push("arcade");
+  const query = params.length ? `?${params.join("&")}` : "";
+  location.replace(`${location.pathname}${query}${location.hash}`);
+}
+// A Target Hit on the kernel theme is held across the reload into the Arcade
+// Theme, so its whole takeover plays in the arcade look.
+const PENDING_CELEBRATION = "pending-celebration";
+function playHeldCelebration() {
+  const held = sessionStorage.getItem(PENDING_CELEBRATION);
+  if (!held) return;
+  sessionStorage.removeItem(PENDING_CELEBRATION);
+  const data = JSON.parse(held);
+  celebrate(data.type, data, Boolean(data.audible));
+}
+
 function playNextCelebration() {
-  if (takeoverBusy || pending.length === 0) return;
+  if (takeoverBusy) return;
+  if (pending.length === 0) {
+    applyTheme();
+    return;
+  }
   const next = pending.shift();
   takeoverBusy = true;
   // Old servers send no `teammate`; treat its absence as "play the sample".
@@ -1412,13 +1495,18 @@ function approvedTakeover(event, done) {
 // into a screen full of sprites. Extra events still land in the Feed.
 let ambientLive = 0;
 
-function ambientScene(container, duration, update) {
+/** Returns whether the scene runs; `done` only fires for one that did. */
+function ambientScene(container, duration, update, done) {
   if (ambientLive >= 6) {
     container.destroy({ children: true });
-    return;
+    return false;
   }
   ambientLive++;
-  runScene(layers.fx, container, duration, update, () => ambientLive--);
+  runScene(layers.fx, container, duration, update, () => {
+    ambientLive--;
+    done?.();
+  });
+  return true;
 }
 
 /** pr-opened: a rocket flies in from the left and docks on the In Flight panel. */
@@ -1521,7 +1609,7 @@ function chime(at = "") {
       ? `CONGRATULATIONS TO TODAY'S MVP${currentMvp.names.length > 1 ? "S" : ""}, ${currentMvp.names.map((n) => String(n).toUpperCase()).join(" & ")} — YOU CRUSHED IT!`
       : null;
 
-  const banner = label(headline, 54, C.ink, {
+  const banner = label(headline, 54, C.heroInk, {
     dropShadow: { color: C.bg, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 1 },
   });
   const stand = label(standCall, 42, C.ink);
@@ -1550,7 +1638,7 @@ function chime(at = "") {
   });
 
   // A chime is an occasion: it owns the screen for a while.
-  ambientScene(scene, 10_000, (progress, elapsed) => {
+  const shown = ambientScene(scene, 10_000, (progress, elapsed) => {
     const fade =
       progress < 0.05 ? progress / 0.05 : progress > 0.92 ? (1 - progress) / 0.08 : 1;
     scene.alpha = fade;
@@ -1559,7 +1647,11 @@ function chime(at = "") {
     rows.forEach((row, i) => {
       if (i > 0) row.alpha = Math.min(Math.max((elapsed - 600 * i) / 500, 0), 1) * fade;
     });
+  }, () => {
+    chimes--;
+    applyTheme();
   });
+  if (shown) chimes++;
 }
 
 // --------------------------------------------------------------------------------
@@ -1593,7 +1685,8 @@ app.ticker.add((ticker) => {
 //   {type:"snapshot", feed:[{<domain event>, at}],
 //    openPrs:[{repo,number,title,actor}],       (openPrs.actor is the PR's author)
 //    mvp:{names,count}|null,                    (all Actors tied for today's lead)
-//    devDeploy:{actor,at}|null}                 (last teammate to deploy to dev)
+//    devDeploy:{actor,at}|null,                 (last teammate to deploy to dev)
+//    arcade:true|false}                         (Arcade Theme on; absent = no opinion)
 //   on connect and after every recorded event, then bare domain
 //   events {type, repo, number, title, actor}; actor is the GitHub login of whoever
 //   did it (merger, reviewer, commenter), always a string and "" when GitHub named
@@ -1612,10 +1705,20 @@ function handleMessage(data) {
   }
   // Not a PR, so no Feed row — renderFeed would trip over the missing repo.
   if (data.type === "wau-target-hit") {
-    celebrate(data.type, data, Boolean(data.audible));
+    if (ARCADE) celebrate(data.type, data, Boolean(data.audible));
+    else {
+      sessionStorage.setItem(PENDING_CELEBRATION, JSON.stringify(data));
+      wantArcade = true;
+      applyTheme();
+    }
     return;
   }
   if (data.type === "snapshot") {
+    // Absent from old servers: no opinion, so no reload.
+    if (typeof data.arcade === "boolean") {
+      wantArcade = data.arcade;
+      applyTheme();
+    }
     feed = data.feed.map(stamp);
     currentMvp = data.mvp;
     setMvp(currentMvp);
@@ -1661,6 +1764,9 @@ void loadHeadlines();
 setInterval(() => void loadWau(), WAU_REFRESH_MS);
 setInterval(() => void loadHeadlines(), NEWS_REFRESH_MS);
 
+// The Target Hit that switched this page into the Arcade Theme plays now.
+playHeldCelebration();
+
 // Visual QA hook: the canvas can only be checked by a human, so every animation and
 // every sound can be fired from the browser console.
 //   arcade.demo()                      — one of everything, in order
@@ -1675,6 +1781,8 @@ setInterval(() => void loadHeadlines(), NEWS_REFRESH_MS);
 //   arcade.setWau() / arcade.setWau(undefined, true) / arcade.setWau(null, true)
 //     — sample success / stale / unavailable WAU states
 //   arcade.setHeadlines(["A very important AI headline"]) — bottom news ticker
+//   ?arcade — load in the Arcade Theme (the pre-reskin look a Target Hit puts on
+//     until midnight); the server's snapshot `arcade` flag reloads it on and off
 const sample = (type) => ({
   type,
   repo: "example-org/demo",
