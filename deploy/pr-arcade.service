@@ -1,7 +1,11 @@
 [Unit]
 Description=PR Arcade server (webhook receiver + display server)
-After=network-online.target
-Wants=network-online.target
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+# The Pi has no RTC: it boots on the last saved time until NTP corrects it, and
+# Quiet Hours, Day Chimes, the MVP and the Arcade Theme's midnight all read the
+# clock. time-sync.target only waits for a real sync when a wait service is
+# enabled; install.sh enables one, capped so an offline boot still starts us.
 
 [Service]
 Type=simple
