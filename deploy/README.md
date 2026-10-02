@@ -50,6 +50,9 @@ journalctl -u pr-arcade -f               # server logs
 systemctl --user status pr-arcade-kiosk  # kiosk (run on the Pi's own session)
 tailscale funnel status                  # is the public URL live
 curl -X POST http://127.0.0.1:3000/wau-target-hit  # replay the WAU Target Hit
+curl -X POST http://127.0.0.1:3000/theme/<name>    # wear public/themes/<name>.js until midnight
+curl -X POST 'http://127.0.0.1:3000/theme/<name>?permanent'  # rewrite config.theme, survives restarts
+curl -X DELETE http://127.0.0.1:3000/theme         # back to config.theme
 ```
 
 ## Exiting the kiosk

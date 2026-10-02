@@ -326,8 +326,8 @@ test("a display connecting after a Target Hit is told the board wears the Arcade
   await sleep(50);
   before.ws.close();
   after.ws.close();
-  expect(before.messages[0]).toMatchObject({ type: "snapshot", arcade: false });
-  expect(after.messages[0]).toMatchObject({ type: "snapshot", arcade: true });
+  expect(before.messages[0]).toMatchObject({ type: "snapshot", theme: "kernel" });
+  expect(after.messages[0]).toMatchObject({ type: "snapshot", theme: "arcade" });
 });
 
 test("a PostHog crossing also puts the board in the Arcade Theme", async () => {
@@ -335,7 +335,7 @@ test("a PostHog crossing also puts the board in the Arcade Theme", async () => {
   const { ws, messages } = await connectedDisplay(running!.port);
   await sleep(50);
   ws.close();
-  expect(messages[0]).toMatchObject({ type: "snapshot", arcade: true });
+  expect(messages[0]).toMatchObject({ type: "snapshot", theme: "arcade" });
 });
 
 test("the Arcade Theme ends at local midnight with one fresh snapshot", async () => {
@@ -348,5 +348,5 @@ test("the Arcade Theme ends at local midnight with one fresh snapshot", async ()
   await sleep(100);
   ws.close();
   const snapshots = messages.filter((message) => message.type === "snapshot");
-  expect(snapshots.map((snapshot) => snapshot.arcade)).toEqual([true, false]);
+  expect(snapshots.map((snapshot) => snapshot.theme)).toEqual(["arcade", "kernel"]);
 });

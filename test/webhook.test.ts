@@ -286,7 +286,7 @@ test("a display connecting receives a snapshot of the Feed reflecting earlier ev
     // No deploy webhook has landed, so the header names nobody in dev.
     devDeploy: null,
     // No Target Hit today, so the board wears its usual theme.
-    arcade: false,
+    theme: "kernel",
     // Snapshot entries carry the server timestamp they were recorded at, so a
     // display can expire them itself rather than restamping them on receipt.
     feed: [

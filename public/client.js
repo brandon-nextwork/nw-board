@@ -20,71 +20,36 @@ import {
   Texture,
 } from "./vendor/pixi.min.mjs";
 import { play, playAmbient, resumeAudio } from "./audio.js";
-import { KERNEL } from "./kernel-tokens.gen.js";
-import { ARCADE_C } from "./arcade-theme.js";
+import { THEMES } from "./themes/index.js";
 
 // The scene is authored at 1080p and scaled to fit whatever the TV reports, so the
 // layout is fixed numbers rather than a responsive system nobody will ever resize.
 const W = 1920;
 const H = 1080;
 
-// ?arcade: the Arcade Theme, the board's pre-reskin look, worn from a WAU Target
-// Hit until local midnight. Read once here and baked into everything built from
-// `C` and label(); switching themes reloads the page (see applyTheme below).
-const ARCADE = new URLSearchParams(location.search).has("arcade");
+// ?theme=<name>: the board's whole look, one of public/themes (kernel when absent
+// or unknown). Read once here and baked into everything built from `C` and
+// label(); switching themes reloads the page (see applyTheme below).
+const requestedTheme = new URLSearchParams(location.search).get("theme");
+const THEME_NAME = Object.hasOwn(THEMES, requestedTheme ?? "") ? requestedTheme : "kernel";
+const T = THEMES[THEME_NAME];
 
-// The board's semantic palette, resolved from the brand kernel. Names stay
-// arcade-local; values come from kernel-tokens.gen.js only. The dark ground is
-// the kernel's leather-warm dark family — never blue-black. Accents follow the
-// categorical convention; red and plum ride the 400 rungs because their 500s
-// fall under 4.5:1 against leather at TV distance.
-const C = ARCADE ? ARCADE_C : {
-  bg: KERNEL["surface-dark"],
-  panel: KERNEL["surface-dark-raised"],
-  panelDeep: KERNEL["brand-900"],
-  panelEdge: KERNEL["brand-700"],
-  ink: KERNEL["text-on-dark"],
-  dim: KERNEL["text-on-dark-muted"],
-  amber: KERNEL["accent-canary"],
-  green: KERNEL["accent-emerald"],
-  red: KERNEL["error-400"],
-  magenta: KERNEL["plum-400"],
-  orange: KERNEL["accent-pumpkin"],
-  info: KERNEL["information-400"],
-  white: KERNEL["warm-white"],
-  // Theme keys: spots where the two themes differ by role, not just by value.
-  marqueeEdge: KERNEL["brand-700"],
-  heroInk: KERNEL["text-on-dark"],
-  pixelDim: KERNEL["brand-600"],
-  titleShadow: KERNEL["surface-dark"],
-  scanline: KERNEL["surface-dark"],
-  scanlineAlpha: 0.3,
-};
-// The arcade letterbox was black; a keyword keeps hex out of this file.
-if (ARCADE) document.body.style.background = "black";
+// The board's semantic palette; each theme's values and reasoning live in its file.
+const C = T.palette;
+if (T.letterbox) document.body.style.background = T.letterbox;
 
-// Brand type, vendored in public/fonts. Display moments (>=54px: takeover
-// banners, marquee title, MVP name, chime) get Suisse Neue with the kernel's
-// display tracking; everything smaller is FK Grotesk Neue, untracked — the
-// kernel hard-blocks letter-spacing on UI text.
-const FONT_UI = '"FK Grotesk Neue", system-ui, sans-serif';
-const FONT_DISPLAY = '"Suisse Neue", "FK Grotesk Neue", system-ui, sans-serif';
-// The Arcade Theme's type: one monospace face, tracked wide, at every size.
-const FONT_ARCADE = 'ui-monospace, "DejaVu Sans Mono", "Courier New", monospace';
-const label = (text, fontSize, fill, extra) => {
-  const display = fontSize >= 54;
-  return new Text({
+const label = (text, fontSize, fill, extra) =>
+  new Text({
     text,
     style: {
-      fontFamily: ARCADE ? FONT_ARCADE : display ? FONT_DISPLAY : FONT_UI,
-      fontWeight: ARCADE ? "normal" : "500",
+      fontFamily: T.type.family(fontSize),
+      fontWeight: T.type.weight,
       fontSize,
       fill,
-      letterSpacing: ARCADE ? 2 : display ? Math.round(fontSize * -0.01) : 0,
+      letterSpacing: T.type.tracking(fontSize),
       ...extra,
     },
   });
-};
 
 const EVENTS = {
   "pr-merged": { name: "MERGED", color: C.amber, icon: "trophy" },
@@ -97,17 +62,13 @@ const EVENTS = {
 const CELEBRATIONS = new Set(["pr-merged", "review-approved"]);
 
 // Pixi bakes glyphs when a Text is constructed, and canvas text never triggers
-// lazy @font-face loading on its own — so load the brand faces explicitly before
+// lazy @font-face loading on its own — so load the theme's faces explicitly before
 // any Text exists. Never let a missing file hang the kiosk: after 3s the
 // system-ui fallbacks in the FONT stacks take over and the board boots anyway.
-// The Arcade Theme never uses the brand faces, so it skips the wait.
-if (!ARCADE) try {
+// A theme with nothing to preload skips the wait.
+if (T.preload.length) try {
   await Promise.race([
-    Promise.all([
-      document.fonts.load('500 62px "Suisse Neue"'),
-      document.fonts.load('500 24px "FK Grotesk Neue"'),
-      document.fonts.load('400 24px "FK Grotesk Neue"'),
-    ]),
+    Promise.all(T.preload.map((font) => document.fonts.load(font))),
     new Promise((_, reject) => setTimeout(() => reject(new Error("font timeout")), 3000)),
   ]);
 } catch {
@@ -306,20 +267,8 @@ const SPRITES = {
     "................",
     "................",
   ],
-  // The Arcade Theme's crown on the logo. A transparent border, because
-  // pixelTexture only outlines inside the grid: without it the outer edge of the
-  // art would get no dark outline.
-  crown: [
-    "...............",
-    ".w.....w.....w.",
-    ".yy...yyy...yy.",
-    ".yyy.yyyyy.yyy.",
-    ".yyyyyyyyyyyyy.",
-    ".ymyyyyryyyygy.",
-    ".yyyyyyyyyyyyy.",
-    ".ooooooooooooo.",
-    "...............",
-  ],
+  // Theme-only art, e.g. the Arcade Theme's crown.
+  ...T.sprites,
 };
 
 // Textures are baked once and shared by every sprite that uses them; nothing in an
@@ -358,7 +307,7 @@ function pixelTexture(name) {
       }
     }),
   );
-  ctx.fillStyle = `#${C.bg.toString(16).padStart(6, "0")}`;
+  ctx.fillStyle = `#${C.spriteOutline.toString(16).padStart(6, "0")}`;
   rows.forEach((row, y) =>
     [...row].forEach((char, x) => {
       if (
@@ -407,6 +356,8 @@ function buildBackground() {
   for (let y = 0; y <= H; y += 60) grid.moveTo(0, y).lineTo(W, y);
   grid.stroke({ width: 1, color: C.panelEdge, alpha: 0.18 });
   layers.back.addChild(grid);
+  // A flat theme (neobrutal) keeps its ground bare: no starfield, grid or roll band.
+  layers.back.visible = !T.decorations.flat;
 
   // Scanlines: 270 dark rows in one static Graphics, drawn over the board so the
   // panels get the CRT texture too.
@@ -423,25 +374,89 @@ function buildBackground() {
   roll.height = 90;
   roll.alpha = 0.035;
   roll.eventMode = "none";
+  roll.visible = !T.decorations.flat;
   world.addChild(roll);
   return roll;
 }
 const rollBand = buildBackground();
 
-/** A panel: the arcade cabinet bezel every part of the board sits in. */
-function panel(x, y, width, height, title, titleColor) {
+// The Neobrutal Theme's building blocks. Kernel and arcade never reach them: every
+// caller is behind a T.decorations key only neobrutal sets.
+
+/** A filled round rect with an ink outline over a hard, unblurred shadow `shadow` px down-right. */
+function slab(g, x, y, width, height, radius, fill, outline, shadow, shadowColor = C.ink) {
+  if (shadow) g.roundRect(x + shadow, y + shadow, width, height, radius).fill(shadowColor);
+  return g.roundRect(x, y, width, height, radius).fill(fill).stroke({ width: outline, color: C.ink });
+}
+
+/** Redraw `bg` as a sticker fitted around `text` (unscaled, any anchor); empty text clears it. */
+function sticker(bg, text, fill, padX = 12) {
+  bg.clear();
+  if (!text.text) return bg;
+  const x = text.x - text.anchor.x * text.width - padX;
+  const y = text.y - text.anchor.y * text.height;
+  return slab(bg, x, y, text.width + padX * 2, text.height, 8, fill, 4, 4);
+}
+/** Ink on a light sticker, white on a dark one. */
+const stickerInk = (fill) => (T.decorations.chips.whiteOn.includes(fill) ? C.white : C.ink);
+
+/**
+ * A container at the takeover card's tilt about the screen centre. The pivot keeps
+ * its children in scene coordinates, so the animations that place them are unchanged.
+ */
+function tilted() {
+  const holder = new Container();
+  holder.pivot.set(W / 2, H / 2);
+  holder.position.set(W / 2, H / 2);
+  holder.rotation = (T.decorations.card.tilt * Math.PI) / 180;
+  return holder;
+}
+
+/** Redraw `g` as the takeover card: `width` x `height`, centred on x, at height `cy`. */
+function card(g, width, height, cy) {
+  const { outline, shadow } = T.decorations.card;
+  return slab(g.clear(), (W - width) / 2, cy - height / 2, width, height, 16, C.white, outline, shadow);
+}
+
+/**
+ * A panel: the arcade cabinet bezel every part of the board sits in. `header`
+ * ({fill, ink}, neobrutal only) makes it a white slab under a solid header bar.
+ */
+function panel(x, y, width, height, title, titleColor, header) {
   const box = new Container();
   box.position.set(x, y);
-  const frame = new Graphics()
-    .roundRect(0, 0, width, height, 10)
-    .fill({ color: C.panel, alpha: 0.85 })
-    .stroke({ width: 4, color: C.panelEdge });
-  box.addChild(frame);
-  const bar = new Graphics()
-    .roundRect(0, 0, width, 56, 10)
-    .fill({ color: C.panelEdge, alpha: 0.55 });
-  box.addChild(bar);
-  const heading = label(title, 34, titleColor);
+  if (header) {
+    // The bar is filled with square bottom corners, cut off by an ink rule, and the
+    // outline goes on last so nothing covers it.
+    const { outline, hardShadow } = T.decorations;
+    box.addChild(
+      new Graphics()
+        .roundRect(hardShadow, hardShadow, width, height, 12)
+        .fill(C.panelEdge)
+        .roundRect(0, 0, width, height, 12)
+        .fill(C.panel)
+        .roundRect(0, 0, width, 68, 12)
+        .fill(header.fill)
+        .rect(0, 56, width, 12)
+        .fill(C.panel)
+        .moveTo(0, 56)
+        .lineTo(width, 56)
+        .stroke({ width: outline, color: C.panelEdge })
+        .roundRect(0, 0, width, height, 12)
+        .stroke({ width: outline, color: C.panelEdge }),
+    );
+  } else {
+    const frame = new Graphics()
+      .roundRect(0, 0, width, height, 10)
+      .fill({ color: C.panel, alpha: 0.85 })
+      .stroke({ width: 4, color: C.panelEdge });
+    box.addChild(frame);
+    const bar = new Graphics()
+      .roundRect(0, 0, width, 56, 10)
+      .fill({ color: C.panelEdge, alpha: 0.55 });
+    box.addChild(bar);
+  }
+  const heading = label(title, 34, header?.ink ?? titleColor);
   heading.position.set(20, 12);
   box.addChild(heading);
   layers.board.addChild(box);
@@ -456,10 +471,12 @@ const marquee = new Container();
 marquee.position.set(24, 16);
 layers.board.addChild(marquee);
 marquee.addChild(
-  new Graphics()
-    .roundRect(0, 0, 1872, 168, 14)
-    .fill({ color: C.panelDeep })
-    .stroke({ width: 5, color: C.marqueeEdge }),
+  T.decorations.marqueeShadow
+    ? slab(new Graphics(), 0, 0, 1872, 168, 14, C.panelDeep, 5, T.decorations.hardShadow, T.decorations.marqueeShadow)
+    : new Graphics()
+        .roundRect(0, 0, 1872, 168, 14)
+        .fill({ color: C.panelDeep })
+        .stroke({ width: 5, color: C.marqueeEdge }),
 );
 
 // Paper on dark, not an accent: the hero recedes into the cabinet and lets the
@@ -470,26 +487,29 @@ const title = label("NEXTWORK ARCADE", 62, C.heroInk, {
 title.position.set(48, 52);
 marquee.addChild(title);
 
-const insertCoin = label("INSERT PULL REQUEST", 24, C.dim);
+const insertCoin = label("INSERT PULL REQUEST", 24, C.marqueeDim);
 insertCoin.position.set(52, 118);
 marquee.addChild(insertCoin);
 
-const mvpCaption = label("TODAY'S MVP", 38, C.ink);
+const mvpCaption = label("TODAY'S MVP", 38, C.marqueeInk);
 mvpCaption.anchor.set(1, 0);
 mvpCaption.position.set(1824, 26);
 marquee.addChild(mvpCaption);
 
 // The name is right-anchored so it grows leftwards; the tally sits under its tail.
-const mvpName = label("ANYONE'S GAME", 64, C.dim);
+const mvpName = label("ANYONE'S GAME", 64, C.marqueeDim);
 mvpName.anchor.set(1, 0);
 mvpName.position.set(1824, 72);
 marquee.addChild(mvpName);
 
-const mvpTally = label("", 38, C.dim);
+const chips = T.decorations.chips;
+const mvpTally = label("", 38, chips ? C.ink : C.marqueeDim);
 mvpTally.anchor.set(1, 1);
 // Bottom-aligned with the name's baseline, clear of the marquee's lower border.
 mvpTally.position.set(1824, 138);
-marquee.addChild(mvpTally);
+// Neobrutal's sticker behind the tally, redrawn with it in setMvp.
+const mvpTallyChip = new Graphics();
+marquee.addChild(mvpTallyChip, mvpTally);
 
 const bulbs = Array.from({ length: 44 }, (_, i) => {
   const bulb = new Sprite(pixelTexture("star"));
@@ -531,7 +551,7 @@ Assets.load({
     logo.scale.set(LOGO_HEIGHT / texture.height);
     logo.position.set(48, 84);
     marquee.addChild(logo);
-    if (ARCADE) {
+    if (T.decorations.crown) {
       // Tipped onto the top-left of the roundel, over the bulbs: 15x9 art at
       // 16/3 draws 80x48, its top-left corner 21px left of and 24px above the
       // logo's, rotated 14 degrees counter-clockwise about that corner.
@@ -556,10 +576,11 @@ Assets.load({
 // --------------------------------------------------------------------------------
 
 const FEED_ROWS = 7;
-const feedPanel = panel(24, 204, 1872, 496, "LIVE FEED // LAST 24H", C.ink);
+const feedHeader = T.decorations.headers?.feed;
+const feedPanel = panel(24, 204, 1872, 496, "LIVE FEED // LAST 24H", C.ink, feedHeader);
 
 // Wall clock on the feed header — the board doubles as the office clock.
-const wallClock = label("", 34, C.ink);
+const wallClock = label("", 34, feedHeader?.ink ?? C.ink);
 wallClock.anchor.set(1, 0);
 wallClock.position.set(1852, 12);
 feedPanel.addChild(wallClock);
@@ -571,16 +592,18 @@ setInterval(() => {
 }, 1000);
 // The last human to deploy to dev, centred on the header: the board answers
 // "who put that on dev?" without anyone opening GitHub.
-const devDeployLabel = label("", 34, C.green);
+const devDeployLabel = label("", 34, chips ? C.ink : C.green);
 devDeployLabel.anchor.set(0.5, 0);
 devDeployLabel.position.set(936, 12);
-feedPanel.addChild(devDeployLabel);
+const devDeployChip = new Graphics();
+feedPanel.addChild(devDeployChip, devDeployLabel);
 /** {actor, at} from the snapshot, or null when nobody on the roster has deployed. */
 function setDevDeploy(devDeploy) {
   // First name only, like the marquee: the header has one line.
   devDeployLabel.text = devDeploy
     ? `IN DEV: ${String(devDeploy.actor).split(" ")[0].toUpperCase()}`
     : "";
+  if (chips) sticker(devDeployChip, devDeployLabel, chips.dev);
 }
 
 const feedEmpty = label("...WAITING FOR PLAYERS...", 30, C.dim);
@@ -595,8 +618,11 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   row.visible = false;
   const icon = pixelSprite("star", 4);
   icon.position.set(24, 22);
+  // Neobrutal's event name is a sticker instead, so it takes the icon's slot.
+  icon.visible = !chips;
+  const kindChip = new Graphics();
   const kind = label("", 28, C.ink);
-  kind.position.set(56, 8);
+  kind.position.set(chips ? 24 : 56, 8);
   // First names are short, so the name and time sit tight together and the
   // title gets everything to the right of the repo pill.
   // Columns sized for the 28px register: APPROVED (the widest kind) ends near
@@ -611,40 +637,57 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   time.position.set(556, 8);
   // Repo pill: a small rounded chip redrawn per render (width follows the text).
   const pillBg = new Graphics();
-  const pillText = label("", 20, C.dim, ARCADE ? { letterSpacing: 1 } : undefined);
+  const pillText = label(
+    "",
+    20,
+    chips ? C.ink : C.dim,
+    T.type.pillTracking === undefined ? undefined : { letterSpacing: T.type.pillTracking },
+  );
   const pill = new Container();
   pill.position.set(580, 6);
   pill.addChild(pillBg, pillText);
-  const title = label("", 28, C.dim);
+  const title = label("", 28, C.feedTitle);
   title.position.set(0, 8); // x set per render, after the pill
-  row.addChild(icon, kind, who, time, pill, title);
+  row.addChild(icon, kindChip, kind, who, time, pill, title);
   feedPanel.addChild(row);
-  return { row, icon, kind, who, time, pillBg, pillText, pill, title };
+  return { row, icon, kindChip, kind, who, time, pillBg, pillText, pill, title };
 });
 
 // --------------------------------------------------------------------------------
 // Weekly WAU: four dashboard KPIs and new WAU per day for this week vs last week.
 // --------------------------------------------------------------------------------
 
-const wauPanel = panel(24, 712, 1872, 248, "WEEKLY WAU GROWTH", C.ink);
+const wauHeader = T.decorations.headers?.wau;
+const wauPanel = panel(24, 712, 1872, 248, "WEEKLY WAU GROWTH", C.ink, wauHeader);
 const wauStatus = label("LOADING...", 24, C.dim);
 wauStatus.anchor.set(1, 0);
 wauStatus.position.set(1852, 16);
 wauPanel.addChild(wauStatus);
 
-function wauCard(x, y, title) {
+/** `hot` (neobrutal only) fills the box with the theme's highlight. */
+function wauCard(x, y, title, hot) {
+  const stats = T.decorations.stats;
   const card = new Container();
   card.position.set(x, y);
   card.addChild(
-    new Graphics()
-      .roundRect(0, 0, 430, 72, 7)
-      .fill({ color: C.panelDeep, alpha: 0.72 })
-      .stroke({ width: 2, color: C.panelEdge }),
+    stats
+      ? slab(new Graphics(), 0, 0, 430, 72, 7, hot ? stats.hot : stats.fill, stats.outline, 0)
+      : new Graphics()
+          .roundRect(0, 0, 430, 72, 7)
+          .fill({ color: C.panelDeep, alpha: 0.72 })
+          .stroke({ width: 2, color: C.panelEdge }),
   );
   const caption = label(title, 18, C.dim);
   caption.position.set(14, 8);
   const value = label("—", 36, C.ink);
   value.position.set(14, 29);
+  if (stats) {
+    // Neobrutal sets the caption and value on one line, the value flush right.
+    caption.anchor.set(0, 0.5);
+    caption.position.set(18, 36);
+    value.anchor.set(1, 0.5);
+    value.position.set(412, 36);
+  }
   card.addChild(caption, value);
   wauPanel.addChild(card);
   return value;
@@ -653,7 +696,7 @@ function wauCard(x, y, title) {
 const wauValues = {
   currentWau: wauCard(20, 68, "CURRENT WAU"),
   targetWau: wauCard(464, 68, "WEEKLY TARGET"),
-  targetPercent: wauCard(20, 150, "TARGET REACHED"),
+  targetPercent: wauCard(20, 150, "TARGET REACHED", true),
   activationPercent: wauCard(464, 150, "ACTIVATION RATE"),
 };
 
@@ -662,12 +705,22 @@ wauChart.position.set(930, 68);
 wauPanel.addChild(wauChart);
 const chartTitle = label("NEW WAU / DAY", 20, C.dim);
 wauChart.addChild(chartTitle);
-const currentLegend = label("● THIS WEEK", 18, C.amber);
+const chart = T.decorations.chart;
+const currentLegend = label(chart ? "THIS WEEK" : "● THIS WEEK", 18, chart ? C.ink : C.amber);
 currentLegend.position.set(500, 2);
 wauChart.addChild(currentLegend);
-const previousLegend = label("● LAST WEEK", 18, C.info);
+const previousLegend = label(chart ? "LAST WEEK" : "● LAST WEEK", 18, chart ? C.ink : C.info);
 previousLegend.position.set(338, 2);
 wauChart.addChild(previousLegend);
+// Neobrutal's legend keys are outlined swatches: its canary text would vanish on white.
+if (chart)
+  for (const [legend, color] of [[previousLegend, C.info], [currentLegend, C.amber]])
+    wauChart.addChild(
+      new Graphics()
+        .rect(legend.x - 22, legend.y + 5, 14, 14)
+        .fill(color)
+        .stroke({ width: chart.outline, color: C.ink }),
+    );
 const chartLines = new Graphics();
 wauChart.addChild(chartLines);
 const dayLabels = Array.from({ length: 7 }, (_, index) => {
@@ -678,9 +731,13 @@ const dayLabels = Array.from({ length: 7 }, (_, index) => {
 });
 const barValues = [0, 1].map(() =>
   Array.from({ length: 7 }, () => {
-    // Untracked in the Arcade Theme too: tracked monospace runs "2.4k" wider than
-    // its 38px bar and into the neighbour's value.
-    const value = label("", 14, C.dim, ARCADE ? { letterSpacing: 0 } : undefined);
+    // A theme may override the value's tracking (see valueTracking in its file).
+    const value = label(
+      "",
+      14,
+      C.dim,
+      T.type.valueTracking === undefined ? undefined : { letterSpacing: T.type.valueTracking },
+    );
     value.anchor.set(0.5, 0);
     wauChart.addChild(value);
     return value;
@@ -717,7 +774,7 @@ function renderWau(data, stale = false) {
     .toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })
     .toUpperCase();
   wauStatus.text = stale ? `STALE // ${updated} // RETRYING` : `UPDATED ${updated}`;
-  wauStatus.style.fill = stale ? C.red : C.green;
+  wauStatus.style.fill = stale ? C.red : (wauHeader?.ink ?? C.green);
 
   const plot = { x: 8, y: 38, width: 900, height: 96 };
   const max = Math.max(
@@ -732,7 +789,7 @@ function renderWau(data, stale = false) {
     .clear()
     .moveTo(plot.x, plot.y + plot.height)
     .lineTo(plot.x + plot.width, plot.y + plot.height)
-    .stroke({ width: 2, color: C.panelEdge })
+    .stroke({ width: chart?.outline ?? 2, color: C.panelEdge })
     .moveTo(plot.x, plot.y + plot.height / 2)
     .lineTo(plot.x + plot.width, plot.y + plot.height / 2)
     .stroke({ width: 1, color: C.panelEdge, alpha: 0.5 });
@@ -743,9 +800,10 @@ function renderWau(data, stale = false) {
     snapshot.daily.forEach((point, index) => {
       const top = y(point[key]);
       chartLines.rect(x(index) + offset, top, barWidth, plot.y + plot.height - top).fill(color);
+      if (chart) chartLines.stroke({ width: chart.outline, color: C.ink });
       const value = barValues[row][index];
       value.text = compact(point[key]);
-      value.style.fill = color;
+      value.style.fill = chart?.valueInk ?? color;
       value.position.set(x(index) + offset + barWidth / 2, plot.y + plot.height + 4);
     });
   }
@@ -788,10 +846,12 @@ const TICKER_SPEED = 0.09; // px per ms — a lap of one 1920px screen every ~21
 // Framed like the marquee and the Feed panel: same side margins, same border.
 const tickerStrip = new Container();
 tickerStrip.addChild(
-  new Graphics()
-    .roundRect(24, TICKER_Y, 1872, TICKER_H, 10)
-    .fill({ color: C.panel, alpha: 0.92 })
-    .stroke({ width: 4, color: C.panelEdge }),
+  T.decorations.tickerFill
+    ? slab(new Graphics(), 24, TICKER_Y, 1872, TICKER_H, 12, T.decorations.tickerFill, T.decorations.outline, T.decorations.hardShadow)
+    : new Graphics()
+        .roundRect(24, TICKER_Y, 1872, TICKER_H, 10)
+        .fill({ color: C.panel, alpha: 0.92 })
+        .stroke({ width: 4, color: C.panelEdge }),
 );
 const tickerContent = new Container();
 // The scroll is clipped to the frame so segments don't poke into the margins.
@@ -809,9 +869,18 @@ function tickerSequence(headlines) {
     seq.addChild(child);
     x += child.width + TICKER_GAP;
   };
-  const marker = label("★ AI NEWS ★", 32, C.green);
-  marker.position.y = TICKER_Y + 32;
-  put(marker);
+  if (chips) {
+    // Neobrutal: the marker is a sticker, padded inside its slot.
+    const marker = label("AI NEWS", 32, stickerInk(chips.news));
+    marker.position.set(12, TICKER_Y + 32);
+    const slot = new Container();
+    slot.addChild(sticker(new Graphics(), marker, chips.news), marker);
+    put(slot);
+  } else {
+    const marker = label("★ AI NEWS ★", 32, C.green);
+    marker.position.y = TICKER_Y + 32;
+    put(marker);
+  }
   if (!headlines.length) {
     const none = label("AI NEWS UNAVAILABLE — RETRYING", 32, C.dim);
     none.position.y = TICKER_Y + 32;
@@ -819,7 +888,7 @@ function tickerSequence(headlines) {
   }
   for (const headline of headlines) {
     const item = new Container();
-    const bullet = label("◆", 32, C.amber);
+    const bullet = label("◆", 32, C.amber, chips ? { stroke: { color: C.ink, width: 4 } } : undefined);
     bullet.position.y = TICKER_Y + 32;
     const text = label(clip(headline, 100), 32, C.ink);
     text.position.set(bullet.width + 24, TICKER_Y + 32);
@@ -870,26 +939,35 @@ function renderFeed() {
   feedEmpty.visible = feed.length === 0;
   for (let i = 0; i < FEED_ROWS; i++) {
     const entry = feed[feed.length - 1 - i];
-    const { row, icon, kind, who, time, pillBg, pillText, pill, title } = feedRows[i];
+    const { row, icon, kindChip, kind, who, time, pillBg, pillText, pill, title } = feedRows[i];
     row.visible = Boolean(entry);
     if (!entry) continue;
     const style = EVENTS[entry.type] ?? { name: entry.type, color: C.dim, icon: "star" };
     icon.texture = pixelTexture(style.icon);
     kind.text = style.name;
-    kind.style.fill = style.color;
+    if (chips) {
+      kind.style.fill = stickerInk(style.color);
+      sticker(kindChip, kind, style.color);
+    } else kind.style.fill = style.color;
     // Clipped to the characters that fit each column at this font size rather than
     // wrapped; a Feed row is a glance, not a read.
-    // Tracked monospace fits one character fewer before the time column.
-    who.text = clip(entry.actor ?? "", ARCADE ? 11 : 12);
+    who.text = clip(entry.actor ?? "", T.type.nameMax);
     time.text = clock(entry.at);
     pillText.text = clip(entry.repo.split("/").pop(), 16);
     pillText.position.set(11, 6);
     const pillWidth = Math.ceil(pillText.width) + 22;
-    pillBg
-      .clear()
-      .roundRect(0, 0, pillWidth, 34, 6)
-      .fill({ color: C.white, alpha: 0.06 })
-      .stroke({ color: C.dim, alpha: 0.7, width: 1.5 });
+    if (chips)
+      pillBg
+        .clear()
+        .roundRect(0, 0, pillWidth, 34, 17)
+        .fill(chips.pill)
+        .stroke({ color: C.ink, width: 3 });
+    else
+      pillBg
+        .clear()
+        .roundRect(0, 0, pillWidth, 34, 6)
+        .fill({ color: C.white, alpha: 0.06 })
+        .stroke({ color: C.dim, alpha: 0.7, width: 1.5 });
     // Title starts just past the pill and runs to the panel edge.
     title.position.x = pill.position.x + pillWidth + 14;
     fitText(title, `#${entry.number}  ${entry.title}`, 1828 - title.position.x);
@@ -979,7 +1057,7 @@ app.ticker.add((t) => {
 // flashes white and pulses the way the score used to when it moved.
 const FLASH_MS = 500;
 let flashLeft = 0;
-let mvpFill = C.dim;
+let mvpFill = C.marqueeDim;
 let currentMvp = null;
 let mvpNames = [];
 let mvpIndex = 0;
@@ -988,8 +1066,10 @@ function drawMvpName() {
   mvpName.text = mvpNames.length
     ? String(mvpNames[mvpIndex % mvpNames.length]).split(" ")[0]
     : "ANYONE'S GAME";
-  // Right-align the pair: the tally hangs off the end of the name.
-  mvpName.position.x = 1824 - (mvpNames.length ? Math.ceil(mvpTally.width) + 14 : 0);
+  // Right-align the pair: the tally hangs off the end of the name (clear of its
+  // sticker's padding when it has one).
+  mvpName.position.x =
+    1824 - (mvpNames.length ? Math.ceil(mvpTally.width) + (chips ? 40 : 14) : 0);
 }
 // A tie shares the crown, so the marquee cycles the contenders. Rotation is not a
 // lead change: no flash, only a new set of contenders earns one — and the timer
@@ -1009,7 +1089,8 @@ function setMvp(mvp) {
     }, 3000);
   }
   mvpTally.text = mvp ? `×${mvp.count}` : "";
-  mvpFill = mvp ? C.amber : C.dim;
+  if (chips) sticker(mvpTallyChip, mvpTally, chips.tally);
+  mvpFill = mvp ? C.amber : C.marqueeDim;
   drawMvpName();
   if (changed) flashLeft = FLASH_MS;
   mvpName.style.fill = changed ? C.white : mvpFill;
@@ -1163,16 +1244,16 @@ function celebrate(type, event = {}, audible = false) {
   playNextCelebration();
 }
 
-// Theme switches are reloads with ?arcade toggled, held until no takeover is
+// Theme switches are reloads with ?theme= rewritten, held until no takeover is
 // playing or queued so a reload never cuts one off. Only a theme that differs
 // from the one this page loaded with triggers one, so a reload cannot loop.
-let wantArcade = ARCADE;
+let wantTheme = THEME_NAME;
 // Day Chimes on screen: a reload would cut the bell off mid-sound.
 let chimes = 0;
 function applyTheme() {
   // Staying put (a switch called off before it happened, or the reload just
   // landed): any held Target Hit plays here rather than being lost.
-  if (wantArcade === ARCADE) {
+  if (wantTheme === THEME_NAME) {
     playHeldCelebration();
     return;
   }
@@ -1181,8 +1262,10 @@ function applyTheme() {
   const params = location.search
     .slice(1)
     .split("&")
-    .filter((param) => param && param.split("=")[0] !== "arcade");
-  if (wantArcade) params.push("arcade");
+    // A bare ?arcade is the pre-?theme= spelling; drop it with any old theme.
+    .filter((param) => param && !["theme", "arcade"].includes(param.split("=")[0]));
+  // The kernel theme is the default, so its URL stays clean.
+  if (wantTheme !== "kernel") params.push(`theme=${wantTheme}`);
   const query = params.length ? `?${params.join("&")}` : "";
   location.replace(`${location.pathname}${query}${location.hash}`);
 }
@@ -1219,9 +1302,15 @@ function playNextCelebration() {
   });
 }
 
+// Neobrutal sets takeovers and chimes on a card. The card's ground is the theme's
+// flat canary, so its dim goes all the way.
+const ON_CARD = Boolean(T.decorations.card);
+
 /**
  * Shared takeover backdrop: dim the board, name the PR, headline in the middle,
  * and credit whoever earned it (`verb` reads "merged by" / "approved by").
+ * Neobrutal (T.decorations.card) sets the copy in ink on a tilted white card, the
+ * credit on a sticker; `fit` re-sizes both after the copy is rewritten.
  */
 function takeoverScene(headline, color, event, verb) {
   const scene = new Container();
@@ -1233,13 +1322,25 @@ function takeoverScene(headline, color, event, verb) {
   dim.tint = C.bg;
   dim.alpha = 0;
   scene.addChild(dim);
+  const copy = ON_CARD ? tilted() : scene;
+  const cardBg = ON_CARD ? new Graphics() : null;
+  const creditChip = ON_CARD ? new Graphics() : null;
+  if (ON_CARD) {
+    scene.addChild(copy);
+    copy.addChild(cardBg);
+  }
 
-  const banner = label(headline, 132, color, {
-    dropShadow: { color: C.bg, distance: 6, blur: 0, angle: Math.PI / 4, alpha: 1 },
-  });
+  const banner = label(
+    headline,
+    132,
+    ON_CARD ? C.ink : color,
+    ON_CARD
+      ? undefined
+      : { dropShadow: { color: C.bg, distance: 6, blur: 0, angle: Math.PI / 4, alpha: 1 } },
+  );
   banner.anchor.set(0.5);
   banner.position.set(W / 2, H / 2 - 60);
-  scene.addChild(banner);
+  copy.addChild(banner);
 
   const caption = label(
     event.repo
@@ -1250,19 +1351,35 @@ function takeoverScene(headline, color, event, verb) {
   );
   caption.anchor.set(0.5);
   caption.position.set(W / 2, H / 2 + 60);
-  scene.addChild(caption);
+  copy.addChild(caption);
 
   // No login means GitHub named nobody; a bare "merged by" credits no one, so skip it.
-  const credit = label(event.actor ? `${verb} ${clip(event.actor, 39)}` : "", 44, color);
+  const credit = label(
+    event.actor ? `${verb} ${clip(event.actor, 39)}` : "",
+    44,
+    ON_CARD ? stickerInk(T.decorations.chips.credit) : color,
+  );
   credit.anchor.set(0.5);
   credit.position.set(W / 2, H / 2 + 130);
-  scene.addChild(credit);
-  return { scene, dim, banner, caption, credit };
+  // The credit and its sticker fade in together; callers fade `creditRow`.
+  const creditRow = new Container();
+  if (ON_CARD) creditRow.addChild(creditChip);
+  creditRow.addChild(credit);
+  copy.addChild(creditRow);
+  const fit = () => {
+    if (!ON_CARD) return;
+    // Wide enough for the headline's bounce (6%) with air; from its top to the credit.
+    const width = Math.max(banner.width * 1.06, caption.width, credit.width) + 200;
+    card(cardBg, Math.min(width, W - 80), 400, H / 2 + 25);
+    sticker(creditChip, credit, T.decorations.chips.credit);
+  };
+  fit();
+  return { scene, dim, banner, caption, credit, creditRow, fit };
 }
 
 /** pr-merged: the big one — flash, confetti rain, fireworks, bouncing headline. */
 function mergedTakeover(event, done) {
-  const { scene, dim, banner, caption, credit } = takeoverScene(
+  const { scene, dim, banner, caption, creditRow } = takeoverScene(
     "PR MERGED!",
     C.amber,
     event,
@@ -1312,11 +1429,11 @@ function mergedTakeover(event, done) {
     scene,
     5000,
     (progress, elapsed, delta) => {
-      dim.alpha = Math.min(progress * 4, 0.85) * (progress > 0.85 ? (1 - progress) / 0.15 : 1);
+      dim.alpha = Math.min(progress * 4, ON_CARD ? 1 : 0.85) * (progress > 0.85 ? (1 - progress) / 0.15 : 1);
       banner.scale.set(Math.min(elapsed / 220, 1) * (1 + Math.sin(elapsed / 160) * 0.06));
       banner.y = H / 2 - 60 + Math.sin(elapsed / 200) * 18;
       caption.alpha = Math.min(elapsed / 400, 1);
-      credit.alpha = Math.min(elapsed / 400, 1);
+      creditRow.alpha = Math.min(elapsed / 400, 1);
       trophy.rotation = Math.sin(elapsed / 260) * 0.25;
       trophy.y = H / 2 - 240 + Math.sin(elapsed / 180) * 14;
       stepParticles(confetti, delta, 0.12);
@@ -1338,7 +1455,7 @@ function mergedTakeover(event, done) {
 function wauTakeover(event, done) {
   // No PR and no Actor, so the shared caption and credit start empty and get the
   // target's own copy instead.
-  const { scene, dim, banner, caption, credit } = takeoverScene(
+  const { scene, dim, banner, caption, credit, creditRow, fit } = takeoverScene(
     "CONGRATULATIONS!",
     C.amber,
     {},
@@ -1348,6 +1465,7 @@ function wauTakeover(event, done) {
   const whole = new Intl.NumberFormat().format;
   if ([event.currentWau, event.targetWau, event.targetPercent].every(Number.isFinite))
     credit.text = `${whole(event.currentWau)} WAU  /  ${whole(event.targetWau)} TARGET  (${event.targetPercent}%)`;
+  fit();
 
   const trophy = pixelSprite("trophy16", 7);
   trophy.position.set(W / 2, H / 2 - 240);
@@ -1401,11 +1519,11 @@ function wauTakeover(event, done) {
     scene,
     12_000,
     (progress, elapsed, delta) => {
-      dim.alpha = Math.min(progress * 12, 0.85) * (progress > 0.9 ? (1 - progress) / 0.1 : 1);
+      dim.alpha = Math.min(progress * 12, ON_CARD ? 1 : 0.85) * (progress > 0.9 ? (1 - progress) / 0.1 : 1);
       banner.scale.set(Math.min(elapsed / 220, 1) * (1 + Math.sin(elapsed / 160) * 0.06));
       banner.y = H / 2 - 60 + Math.sin(elapsed / 200) * 18;
       caption.alpha = Math.min(elapsed / 400, 1);
-      credit.alpha = Math.min(elapsed / 400, 1);
+      creditRow.alpha = Math.min(elapsed / 400, 1);
       trophy.rotation = Math.sin(elapsed / 260) * 0.25;
       trophy.y = H / 2 - 240 + Math.sin(elapsed / 180) * 14;
       stepParticles(confetti, delta, 0.12);
@@ -1433,7 +1551,7 @@ function wauTakeover(event, done) {
 
 /** review-approved: a stamp slamming down inside an expanding shockwave ring. */
 function approvedTakeover(event, done) {
-  const { scene, dim, banner, caption, credit } = takeoverScene(
+  const { scene, dim, banner, caption, creditRow } = takeoverScene(
     "APPROVED!",
     C.green,
     event,
@@ -1470,14 +1588,14 @@ function approvedTakeover(event, done) {
     scene,
     5000,
     (progress, elapsed, delta) => {
-      dim.alpha = Math.min(progress * 5, 0.8) * (progress > 0.85 ? (1 - progress) / 0.15 : 1);
+      dim.alpha = Math.min(progress * 5, ON_CARD ? 1 : 0.8) * (progress > 0.85 ? (1 - progress) / 0.15 : 1);
       // The stamp drops fast, overshoots, settles.
       const drop = Math.min(elapsed / 320, 1);
       stamp.scale.set(24 - 12 * drop + Math.sin(drop * Math.PI) * 4);
       stamp.alpha = drop;
       banner.scale.set(drop < 1 ? drop * 0.9 : 1 + Math.sin(elapsed / 150) * 0.04);
       caption.alpha = Math.min(elapsed / 400, 1);
-      credit.alpha = Math.min(elapsed / 400, 1);
+      creditRow.alpha = Math.min(elapsed / 400, 1);
       ring.scale.set(1 + progress * 34);
       ring.alpha = Math.max(0, 0.9 - progress * 1.2);
       stepParticles(sparks, delta, 0.06);
@@ -1595,7 +1713,8 @@ const ambient = (type) => AMBIENT[type]?.();
 
 /** Day Chime: a banner sweeps across the marquee line and the bell plays. */
 function chime(at = "") {
-  const scene = new Container();
+  // Neobrutal sets the chime on the takeover card, every line in ink.
+  const scene = ON_CARD ? tilted() : new Container();
   const endOfDay = at === "17:00";
   play(endOfDay ? "day-chime" : "day-start");
   // Headline stays arcade; the practical call-to-action rides beneath it.
@@ -1609,21 +1728,31 @@ function chime(at = "") {
       ? `CONGRATULATIONS TO TODAY'S MVP${currentMvp.names.length > 1 ? "S" : ""}, ${currentMvp.names.map((n) => String(n).toUpperCase()).join(" & ")} — YOU CRUSHED IT!`
       : null;
 
-  const banner = label(headline, 54, C.heroInk, {
-    dropShadow: { color: C.bg, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 1 },
-  });
+  const banner = label(
+    headline,
+    54,
+    ON_CARD ? C.ink : C.heroInk,
+    ON_CARD
+      ? undefined
+      : { dropShadow: { color: C.bg, distance: 4, blur: 0, angle: Math.PI / 4, alpha: 1 } },
+  );
   const stand = label(standCall, 42, C.ink);
-  const congrats = congratsText ? label(congratsText, 42, C.amber) : null;
+  const congrats = congratsText ? label(congratsText, 42, ON_CARD ? C.ink : C.amber) : null;
   const rows = congrats ? [banner, stand, congrats] : [banner, stand];
 
-  const backing = new Sprite(dotTexture());
-  backing.anchor.set(0.5);
-  backing.width = W;
-  backing.height = congrats ? 300 : 230;
-  backing.tint = C.bg;
-  backing.alpha = 0.85;
-  backing.position.set(W / 2, H / 2);
-  scene.addChild(backing);
+  if (ON_CARD) {
+    const widest = Math.min(1840, Math.max(...rows.map((row) => row.width)));
+    scene.addChild(card(new Graphics(), Math.min(widest + 160, W - 40), rows.length * 76 + 80, H / 2));
+  } else {
+    const backing = new Sprite(dotTexture());
+    backing.anchor.set(0.5);
+    backing.width = W;
+    backing.height = congrats ? 300 : 230;
+    backing.tint = C.bg;
+    backing.alpha = 0.85;
+    backing.position.set(W / 2, H / 2);
+    scene.addChild(backing);
+  }
   // A three-way MVP tie runs this line past both screen edges at 42px, so any
   // row wider than the content width is scaled down to fit rather than clipped.
   const fitRow = (row) => (row.width > 1840 ? 1840 / row.width : 1);
@@ -1686,7 +1815,7 @@ app.ticker.add((ticker) => {
 //    openPrs:[{repo,number,title,actor}],       (openPrs.actor is the PR's author)
 //    mvp:{names,count}|null,                    (all Actors tied for today's lead)
 //    devDeploy:{actor,at}|null,                 (last teammate to deploy to dev)
-//    arcade:true|false}                         (Arcade Theme on; absent = no opinion)
+//    theme:"<name>"}                            (theme to wear; absent/unknown = no opinion)
 //   on connect and after every recorded event, then bare domain
 //   events {type, repo, number, title, actor}; actor is the GitHub login of whoever
 //   did it (merger, reviewer, commenter), always a string and "" when GitHub named
@@ -1705,18 +1834,23 @@ function handleMessage(data) {
   }
   // Not a PR, so no Feed row — renderFeed would trip over the missing repo.
   if (data.type === "wau-target-hit") {
-    if (ARCADE) celebrate(data.type, data, Boolean(data.audible));
-    else {
+    if (THEME_NAME === "arcade") {
+      // Cancels any switch away still held behind a takeover: the server has just
+      // put the board in arcade, so leaving would only bounce straight back.
+      wantTheme = "arcade";
+      celebrate(data.type, data, Boolean(data.audible));
+    } else {
       sessionStorage.setItem(PENDING_CELEBRATION, JSON.stringify(data));
-      wantArcade = true;
+      wantTheme = "arcade";
       applyTheme();
     }
     return;
   }
   if (data.type === "snapshot") {
-    // Absent from old servers: no opinion, so no reload.
-    if (typeof data.arcade === "boolean") {
-      wantArcade = data.arcade;
+    // Absent from old servers, or a theme this page doesn't know: no opinion, so
+    // no reload.
+    if (typeof data.theme === "string" && Object.hasOwn(THEMES, data.theme)) {
+      wantTheme = data.theme;
       applyTheme();
     }
     feed = data.feed.map(stamp);
@@ -1781,8 +1915,9 @@ playHeldCelebration();
 //   arcade.setWau() / arcade.setWau(undefined, true) / arcade.setWau(null, true)
 //     — sample success / stale / unavailable WAU states
 //   arcade.setHeadlines(["A very important AI headline"]) — bottom news ticker
-//   ?arcade — load in the Arcade Theme (the pre-reskin look a Target Hit puts on
-//     until midnight); the server's snapshot `arcade` flag reloads it on and off
+//   ?theme=arcade — load in a theme from public/themes (arcade is the pre-reskin
+//     look a Target Hit puts on until midnight); the server's snapshot `theme`
+//     field reloads the page into whichever theme it names
 const sample = (type) => ({
   type,
   repo: "example-org/demo",

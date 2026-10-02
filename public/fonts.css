@@ -26,3 +26,24 @@
   font-style: normal;
   font-display: swap;
 }
+
+/* The Neobrutal Theme's faces (themes/neobrutal.js): SIL OFL Google Fonts, latin
+   subset only, licence alongside each. Archivo Black ships one weight (400), but
+   is declared 700 here so the theme's single `type.weight` of "700" picks the
+   right face for both families. */
+
+@font-face {
+  font-family: "Archivo Black";
+  src: url("/fonts/archivo-black/ArchivoBlack-Regular-latin.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/space-grotesk/SpaceGrotesk-Bold-latin.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
