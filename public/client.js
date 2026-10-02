@@ -142,6 +142,8 @@ fitToWindow();
 // software rendering and explains any slow motion better than guessing.
 // An average hides judder, so it also counts the frames that blew the 60Hz budget
 // (>25ms) and the worst one, per 5s. elapsedMS is the raw gap; deltaMS is capped.
+// Each 5s line is also logged, so the kiosk's journal carries it (kiosk.sh turns
+// on Chromium's console logging alongside ?fps) and nobody has to read it off the TV.
 if (location.search.includes("fps")) {
   let rendererName = "unknown";
   try {
@@ -164,6 +166,7 @@ if (location.search.includes("fps")) {
   });
   setInterval(() => {
     pacing = `${slow} slow / worst ${worst.toFixed(0)}ms (5s)`;
+    console.log(`fps: ${app.ticker.FPS.toFixed(0)} FPS — ${rendererName} — ${pacing}`);
     slow = 0;
     worst = 0;
   }, 5000);

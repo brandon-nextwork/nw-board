@@ -9,6 +9,8 @@
 set -euo pipefail
 
 # PR_ARCADE_FPS=1 adds the ?fps overlay: frame rate + which GPU/renderer WebGL got.
+# It also logs the overlay every 5s to this unit's journal:
+#   journalctl _SYSTEMD_USER_UNIT=pr-arcade-kiosk.service -f | grep -o 'fps: [^"]*'
 URL="http://localhost:3000/${PR_ARCADE_FPS:+?fps}"
 
 # PR_ARCADE_VOLUME calibrates the board against the TV. 100% = unity, no attenuation.
@@ -151,4 +153,5 @@ exec "$CHROMIUM" \
   --ignore-gpu-blocklist \
   --enable-gpu-rasterization \
   --enable-zero-copy \
+  ${PR_ARCADE_FPS:+--enable-logging=stderr} \
   "$URL"
