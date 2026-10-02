@@ -453,7 +453,10 @@ export async function startServer(port: number, options: Options = {}) {
   // read the five saved insights, but it cannot turn this route into a general proxy.
   let lastWau: ReturnType<typeof normalizeWauDashboard> | undefined;
   let warming = false;
+  let wauAsked = 0;
+  let wauApplied = 0;
   app.get("/wau.json", async (_req, res) => {
+    const asked = ++wauAsked;
     const token = process.env.POSTHOG_PERSONAL_API_KEY;
     if (!token) {
       res.sendStatus(503);
@@ -488,7 +491,31 @@ export async function startServer(port: number, options: Options = {}) {
       });
       if (!response.ok) throw new Error(`PostHog returned ${response.status}`);
       const payload = await limitedText(response, "WAU dashboard response exceeds 1 MiB");
-      lastWau = normalizeWauDashboard(JSON.parse(payload));
+      const next = normalizeWauDashboard(JSON.parse(payload));
+      // A slow read asked before the one already applied holds older cache; letting it
+      // overwrite lastWau would re-arm the crossing below and celebrate twice.
+      if (asked < wauApplied) {
+        res.set("Cache-Control", "no-store").json(next);
+        return;
+      }
+      wauApplied = asked;
+      // Crossing only, so a restart that boots already over target stays quiet.
+      // ponytail: a crossing while the server is down is missed; persist the last
+      // celebrated Sat–Fri cycle if that matters.
+      if (lastWau && lastWau.targetPercent < 100 && next.targetPercent >= 100) {
+        const audible = soundAllowed();
+        console.log(
+          `WAU target hit: ${next.targetPercent}% sound=${audible ? "clip" : "silent (quiet hours)"}`,
+        );
+        broadcast({
+          type: "wau-target-hit",
+          audible,
+          currentWau: next.currentWau,
+          targetWau: next.targetWau,
+          targetPercent: next.targetPercent,
+        });
+      }
+      lastWau = next;
       res.set("Cache-Control", "no-store").json(lastWau);
     } catch (error) {
       console.warn(`WAU dashboard unavailable: ${error}`);
@@ -525,7 +552,10 @@ export async function startServer(port: number, options: Options = {}) {
   //               the 8-bit jingle). Every other Ambient Event is silent and carries
   //               neither flag, which is how the board knows to stay quiet.
   //   chime:      {"type":"day-chime","at":"09:00"}  (weekdays, on the configured times)
-  // No domain event type is called "snapshot" or "day-chime", so `type` tells them apart.
+  //   wau target: {"type":"wau-target-hit","audible":true|false, currentWau, targetWau,
+  //               targetPercent} — the WAU panel's weekly target crossing 100%: a
+  //               Celebration with no PR, "audible" gated by Quiet Hours.
+  // No domain event type is called "snapshot", "day-chime" or "wau-target-hit", so `type` tells them apart.
   const broadcast = (message: unknown) => {
     for (const client of wss.clients) client.send(JSON.stringify(message));
   };
