@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { startServer } from "../src/server.ts";
-import { configPath } from "./helpers.ts";
+import { configPath, connectedDisplay } from "./helpers.ts";
 
 let running: { port: number; close: () => Promise<void> } | undefined;
 const upstreams: Server[] = [];
@@ -37,11 +37,11 @@ const tile = (id: number, result: unknown[]) => ({ id, insight: { result } });
 // The saved insight labels rows by weekday of the Sat–Fri cycle and carries a
 // daily-target column the board does not use.
 const DAYS = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-const dashboard = () => ({
+const dashboard = (targetPercent = "33.7%") => ({
   results: [
     tile(7119738, [[5906]]),
     tile(7119740, [[17518]]),
-    tile(7122309, [["33.7%"]]),
+    tile(7122309, [[targetPercent]]),
     tile(10992630, [["4.5%"]]),
     tile(
       7119735,
@@ -220,4 +220,73 @@ test.each([
   running = await startServer(0, { configPath, posthogApiBase: base });
 
   expect((await fetch(`http://127.0.0.1:${running.port}/wau.json`)).status).toBe(502);
+});
+
+/** Quiet Hours are local time: 13 August 2026 is a Thursday. */
+const thursdayAt = (hour: number) => new Date(2026, 7, 13, hour).getTime();
+
+/** Serve each PostHog read the next target percent, and collect what the board hears. */
+async function targetHits(percents: string[], clock = thursdayAt(10)) {
+  const base = await upstream((req, res) => {
+    if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(dashboard(percents.shift())));
+  });
+  running = await startServer(0, { configPath, posthogApiBase: base, now: () => clock });
+  const { ws, messages } = await connectedDisplay(running.port);
+  while (percents.length) await fetch(`http://127.0.0.1:${running.port}/wau.json`);
+  await sleep(50);
+  ws.close();
+  return messages.filter((message) => message.type === "wau-target-hit");
+}
+
+test("the WAU target crossing 100% is broadcast as a Target Hit", async () => {
+  expect(await targetHits(["95%", "100%"])).toEqual([
+    {
+      type: "wau-target-hit",
+      audible: true,
+      currentWau: 5906,
+      targetWau: 17518,
+      targetPercent: 100,
+    },
+  ]);
+});
+
+test("a first read already over target is no crossing", async () => {
+  expect(await targetHits(["100%", "100%"])).toEqual([]);
+});
+
+test("staying over target celebrates only the one crossing", async () => {
+  expect(await targetHits(["99.9%", "100%", "100%", "101%"])).toHaveLength(1);
+});
+
+test("a Target Hit in Quiet Hours is flagged silent", async () => {
+  expect(await targetHits(["95%", "100%"], thursdayAt(22))).toMatchObject([
+    { type: "wau-target-hit", audible: false },
+  ]);
+});
+
+test("a slow read of older cache landing after the crossing does not re-arm it", async () => {
+  // Read 2 asks first but answers last, with the cache from before the crossing.
+  const reads: [string, number][] = [["95%", 0], ["99%", 200], ["100%", 0], ["100%", 0]];
+  const base = await upstream((req, res) => {
+    if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
+    const [percent, delay] = reads.shift()!;
+    setTimeout(() => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(dashboard(percent)));
+    }, delay);
+  });
+  running = await startServer(0, { configPath, posthogApiBase: base, now: () => thursdayAt(10) });
+  const { ws, messages } = await connectedDisplay(running.port);
+  const wau = () => fetch(`http://127.0.0.1:${running!.port}/wau.json`);
+  await wau();
+  const slow = wau();
+  await sleep(50);
+  await wau();
+  await slow;
+  await wau();
+  await sleep(50);
+  ws.close();
+  expect(messages.filter((message) => message.type === "wau-target-hit")).toHaveLength(1);
 });

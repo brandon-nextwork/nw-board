@@ -31,6 +31,17 @@ const JINGLE_NOTES = {
     tone(880, 0.26, 0.16, { type: "triangle", gain: 0.05 });
     noise(0, 0.22, 0.03);
   },
+  // The weekly WAU target: a longer fanfare, then a crowd of short noise bursts
+  // clapping under a decaying wash — the applause clip's stand-in.
+  "wau-target-hit": (tone, noise) => {
+    [523, 659, 784, 1047, 784, 1047].forEach((freq, i) => tone(freq, i * 0.12, 0.14));
+    tone(523, 0.72, 1.4, { gain: 0.08 });
+    [1047, 1319, 1568].forEach((freq) =>
+      tone(freq, 0.72, 1.2, { type: "triangle", gain: 0.06 }),
+    );
+    noise(0.72, 3, 0.04);
+    for (let i = 0; i < 60; i++) noise(0.8 + ((i * 0.37) % 2.8), 0.04, 0.05);
+  },
   "day-chime": dayChime,
   // Start of day has its own clip; without the file it falls back to the same bell.
   "day-start": dayChime,
@@ -42,6 +53,7 @@ const SAMPLES = {
   "pr-opened": "sounds/yo-pierre.mp3",
   "day-start": "sounds/oh-my-gosh.mp3",
   "day-chime": "sounds/super-mario-end.mp3",
+  "wau-target-hit": "sounds/applause.mp3",
 };
 
 /**

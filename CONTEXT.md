@@ -4,7 +4,8 @@ Glossary for the PR arcade display (Raspberry Pi + TV, GitHub activity).
 
 ## Terms
 
-- **Celebration Event** — an event worth fanfare: a PR merged or a review approval. Triggers a prominent animation and a short sound effect.
+- **Celebration Event** — an event worth fanfare: a PR merged, a review approval, or a Target Hit. Triggers a prominent animation and a short sound effect.
+- **Target Hit** — the WAU panel's weekly target reaching 100%. A Celebration Event not tied to a PR: takes the board over (longer than a merge) with applause, gated by Quiet Hours. Fires once per crossing from below 100%, so a restart that boots already over target stays quiet.
 - **Ambient Event** — any other tracked event (PR opened, PR closed without merge, changes requested, PR comment). Shown as an animation in the background feed, never taking the board over. Silent, with one exception: a PR opened also plays a short sound effect, gated by Quiet Hours and the roster exactly like a Celebration Event. It is still Ambient — the distinction is the takeover, not the noise.
 - **Tracked Repo** — a repository on the curated list whose activity feeds the display. Activity from any other repo is ignored.
 - **Quiet Hours** — a configured daily window during which Celebration Events animate but make no sound.

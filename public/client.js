@@ -1019,7 +1019,7 @@ function stepParticles(pieces, delta, gravity = 0.18) {
 }
 
 // Sound lives in audio.js so its asynchronous autoplay/device recovery path can
-// be tested without booting Pixi. Every generated jingle is under three seconds.
+// be tested without booting Pixi. Every generated jingle is under four seconds.
 
 // --------------------------------------------------------------------------------
 // Celebration takeovers. Queued: two merges landing together play one after the
@@ -1124,7 +1124,12 @@ function playNextCelebration() {
   takeoverBusy = true;
   // Old servers send no `teammate`; treat its absence as "play the sample".
   if (next.audible) play(next.type, next.event.teammate !== false);
-  const scene = next.type === "pr-merged" ? mergedTakeover : approvedTakeover;
+  const scene =
+    next.type === "pr-merged"
+      ? mergedTakeover
+      : next.type === "wau-target-hit"
+        ? wauTakeover
+        : approvedTakeover;
   scene(next.event, () => {
     takeoverBusy = false;
     playNextCelebration();
@@ -1234,6 +1239,107 @@ function mergedTakeover(event, done) {
       stepParticles(confetti, delta, 0.12);
       stepParticles(fireworks, delta, 0.1);
       for (const spark of fireworks) spark.alpha = 1 - progress;
+    },
+    () => {
+      clip?.();
+      done?.();
+    },
+  );
+}
+
+/**
+ * wau-target-hit: the weekly WAU target crossing 100%. Rarer than a merge and
+ * nobody's PR, so it holds the board longer: the confetti keeps raining and the
+ * fireworks re-fire until the dim lifts.
+ */
+function wauTakeover(event, done) {
+  // No PR and no Actor, so the shared caption and credit start empty and get the
+  // target's own copy instead.
+  const { scene, dim, banner, caption, credit } = takeoverScene(
+    "CONGRATULATIONS!",
+    C.amber,
+    {},
+    "",
+  );
+  caption.text = "WE HIT 100% OF OUR WEEKLY WAU TARGET";
+  const whole = new Intl.NumberFormat().format;
+  if ([event.currentWau, event.targetWau, event.targetPercent].every(Number.isFinite))
+    credit.text = `${whole(event.currentWau)} WAU  /  ${whole(event.targetWau)} TARGET  (${event.targetPercent}%)`;
+
+  const trophy = pixelSprite("trophy16", 7);
+  trophy.position.set(W / 2, H / 2 - 240);
+  const clip = showCelebrationClip(15_000, () => {
+    if (!trophy.destroyed) trophy.visible = true;
+  });
+  trophy.visible = !clip;
+  scene.addChild(trophy);
+
+  // Sparks first so the confetti can have whatever is left of the particle ceiling.
+  const SPARKS = 36;
+  const launch = (spark) => {
+    spark.position.set(W / 2, H / 2 - 120);
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 4 + Math.random() * 8;
+    spark.vx = Math.cos(angle) * speed;
+    spark.vy = Math.sin(angle) * speed;
+  };
+  const fireworks = particles(scene, SPARKS, () => {
+    const spark = new Sprite(pixelTexture("star"));
+    spark.anchor.set(0.5);
+    spark.scale.set(3);
+    spark.tint = [C.amber, C.magenta, C.ink][Math.floor(Math.random() * 3)];
+    spark.spin = 0.1;
+    launch(spark);
+    return spark;
+  });
+
+  const drop = (piece) => {
+    piece.x = Math.random() * W;
+    piece.vx = (Math.random() - 0.5) * 2;
+    piece.vy = 3 + Math.random() * 5;
+  };
+  const confetti = particles(scene, MAX_PARTICLES - SPARKS, () => {
+    const piece = new Sprite(dotTexture());
+    piece.anchor.set(0.5);
+    piece.scale.set(6 + Math.random() * 6);
+    piece.tint = [C.amber, C.magenta, C.green, C.ink, C.orange][
+      Math.floor(Math.random() * 5)
+    ];
+    piece.y = -Math.random() * H;
+    piece.spin = (Math.random() - 0.5) * 0.3;
+    drop(piece);
+    return piece;
+  });
+
+  const BURST_MS = 1500;
+  let burst = 0;
+  runScene(
+    layers.takeover,
+    scene,
+    12_000,
+    (progress, elapsed, delta) => {
+      dim.alpha = Math.min(progress * 12, 0.85) * (progress > 0.9 ? (1 - progress) / 0.1 : 1);
+      banner.scale.set(Math.min(elapsed / 220, 1) * (1 + Math.sin(elapsed / 160) * 0.06));
+      banner.y = H / 2 - 60 + Math.sin(elapsed / 200) * 18;
+      caption.alpha = Math.min(elapsed / 400, 1);
+      credit.alpha = Math.min(elapsed / 400, 1);
+      trophy.rotation = Math.sin(elapsed / 260) * 0.25;
+      trophy.y = H / 2 - 240 + Math.sin(elapsed / 180) * 14;
+      stepParticles(confetti, delta, 0.12);
+      // Recycle what falls off the bottom so the rain lasts; stop as the dim
+      // lifts, so the last of it drains away instead of vanishing mid-air.
+      for (const piece of confetti) {
+        if (piece.y > H + 40 && progress < 0.88) {
+          piece.y = -40;
+          drop(piece);
+        }
+      }
+      if (Math.floor(elapsed / BURST_MS) > burst) {
+        burst = Math.floor(elapsed / BURST_MS);
+        fireworks.forEach(launch);
+      }
+      stepParticles(fireworks, delta, 0.1);
+      for (const spark of fireworks) spark.alpha = 1 - (elapsed % BURST_MS) / BURST_MS;
     },
     () => {
       clip?.();
@@ -1495,11 +1601,18 @@ app.ticker.add((ticker) => {
 // audible:true|false (Quiet Hours) and teammate:true|false (clip or jingle);
 // every other Ambient Event carries neither and stays silent. And
 //   {type:"day-chime", at:"HH:MM"} marks the start and end of the workday.
+//   {type:"wau-target-hit", audible, currentWau, targetWau, targetPercent} is a
+//   Celebration with no PR: it takes the board over but never joins the Feed.
 // --------------------------------------------------------------------------------
 
 function handleMessage(data) {
   if (data.type === "day-chime") {
     chime(data.at ?? "");
+    return;
+  }
+  // Not a PR, so no Feed row — renderFeed would trip over the missing repo.
+  if (data.type === "wau-target-hit") {
+    celebrate(data.type, data, Boolean(data.audible));
     return;
   }
   if (data.type === "snapshot") {
@@ -1553,6 +1666,7 @@ setInterval(() => void loadHeadlines(), NEWS_REFRESH_MS);
 //   arcade.demo()                      — one of everything, in order
 //   arcade.event({type:"pr-merged", repo:"a/b", number:7, title:"x", audible:true})
 //   arcade.celebrate("review-approved") / arcade.ambient("pr-comment") / arcade.chime("09:00")
+//   arcade.celebrate("wau-target-hit") — the WAU target takeover with sample numbers
 //   arcade.play("pr-merged")           — sound only
 //   arcade.ambient() animates silently; pr-opened's sound rides the audible flag, so
 //   hear it with arcade.play("pr-opened") or arcade.event({...,"audible":true})
@@ -1589,7 +1703,14 @@ addEventListener("pointerdown", () => resumeAudio(), { once: true });
 
 window.arcade = {
   app, // arcade.app.ticker.stop() / .update(t) steps an animation frame by frame
-  celebrate: (type = "pr-merged", audible = true) => celebrate(type, sample(type), audible),
+  celebrate: (type = "pr-merged", audible = true) =>
+    celebrate(
+      type,
+      type === "wau-target-hit"
+        ? { type, currentWau: 17602, targetWau: sampleWau.targetWau, targetPercent: 100.5 }
+        : sample(type),
+      audible,
+    ),
   ambient,
   chime,
   play,

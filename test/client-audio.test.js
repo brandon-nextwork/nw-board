@@ -92,6 +92,8 @@ test.for([
   ["day-chime", "sounds/super-mario-end.mp3"],
   // Ambient but audible: it needs a jingle of its own, or a missing file is silence.
   ["pr-opened", "sounds/yo-pierre.mp3"],
+  // No PR, so no teammate flag: the takeover plays the clip by default.
+  ["wau-target-hit", "sounds/applause.mp3"],
 ])("the %s clip falls back to a jingle when the file is missing", async ([name, file]) => {
   const { AudioContext, starts } = audioContext("suspended");
   const Audio = vi.fn(function Audio() {
