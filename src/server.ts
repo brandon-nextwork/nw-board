@@ -526,6 +526,27 @@ export async function startServer(port: number, options: Options = {}) {
     }
   });
 
+  // Replays the Target Hit on demand: on the Pi, curl -X POST 127.0.0.1:3000/wau-target-hit.
+  // Funnel proxies from loopback too; its X-Forwarded-For is what keeps the internet out.
+  // That holds for HTTP Funnel only: `funnel --tcp` adds no header and would let it through.
+  app.post("/wau-target-hit", (req, res) => {
+    const loopback = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+      req.socket.remoteAddress ?? "",
+    );
+    if (!loopback || req.headers["x-forwarded-for"] !== undefined) {
+      res.sendStatus(403);
+      return;
+    }
+    broadcast({
+      type: "wau-target-hit",
+      audible: soundAllowed(),
+      currentWau: lastWau?.currentWau,
+      targetWau: lastWau?.targetWau,
+      targetPercent: lastWau?.targetPercent,
+    });
+    res.sendStatus(204);
+  });
+
   app.use(express.static(fileURLToPath(new URL("../public", import.meta.url))));
   const http = createServer(app);
   const wss = new WebSocketServer({ server: http });
@@ -555,6 +576,7 @@ export async function startServer(port: number, options: Options = {}) {
   //   wau target: {"type":"wau-target-hit","audible":true|false, currentWau, targetWau,
   //               targetPercent} — the WAU panel's weekly target crossing 100%: a
   //               Celebration with no PR, "audible" gated by Quiet Hours.
+  //               Also sent on demand by a loopback POST /wau-target-hit, with the last read.
   // No domain event type is called "snapshot", "day-chime" or "wau-target-hit", so `type` tells them apart.
   const broadcast = (message: unknown) => {
     for (const client of wss.clients) client.send(JSON.stringify(message));

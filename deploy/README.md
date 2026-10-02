@@ -48,6 +48,7 @@ sudo systemctl status pr-arcade          # server
 journalctl -u pr-arcade -f               # server logs
 systemctl --user status pr-arcade-kiosk  # kiosk (run on the Pi's own session)
 tailscale funnel status                  # is the public URL live
+curl -X POST http://127.0.0.1:3000/wau-target-hit  # replay the WAU Target Hit
 ```
 
 ## Exiting the kiosk
