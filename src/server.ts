@@ -1,9 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
-import express, { type ErrorRequestHandler } from "express";
+import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import { WebSocketServer } from "ws";
 
 type DomainEvent = {
@@ -117,6 +117,20 @@ function startOfWeek(at: number) {
 
 /** Local midnight of the day containing `at` — today's MVP starts here. */
 const startOfDay = (at: number) => new Date(at).setHours(0, 0, 0, 0);
+
+/** The next local midnight after `at` — when a live Theme comes off. */
+const nextMidnight = (at: number) => new Date(at).setHours(24, 0, 0, 0);
+
+/**
+ * A Theme — the board's whole look — is a file in public/themes/. The pattern keeps
+ * a name from walking out of the directory; index.js is the loader, not a look.
+ */
+const THEMES_DIR = fileURLToPath(new URL("../public/themes/", import.meta.url));
+const isTheme = (name: unknown): name is string =>
+  typeof name === "string" &&
+  /^[a-z0-9-]+$/.test(name) &&
+  name !== "index" &&
+  existsSync(`${THEMES_DIR}${name}.js`);
 
 const UPSTREAM_MAX_BYTES = 1024 * 1024;
 const POSTHOG_PROJECT = 196853;
@@ -236,6 +250,13 @@ export async function startServer(port: number, options: Options = {}) {
   if (!Array.isArray(config.chimes)) throw new Error(badChimes);
   const chimes: string[] = config.chimes;
   for (const chime of chimes) minutesOfDay(chime, badChimes);
+
+  // The Theme the board wears when nothing live overrides it. Optional: existing Pi
+  // installs keep config.json across deploys, and they wore kernel before this key.
+  // A POST /theme?name=<name>&permanent rewrites both this and the file.
+  let defaultTheme: string = config.theme ?? "kernel";
+  if (!isTheme(defaultTheme))
+    throw new Error(`${configPath}: theme must name a file in public/themes/, e.g. "kernel"`);
 
   const now = options.now ?? Date.now;
   const isWeekday = (at: Date) => at.getDay() >= 1 && at.getDay() <= 5;
@@ -455,11 +476,14 @@ export async function startServer(port: number, options: Options = {}) {
   let warming = false;
   let wauAsked = 0;
   let wauApplied = 0;
-  // A Target Hit puts the board in the Arcade Theme until the next local midnight.
-  // ponytail: in-memory, so a server restart mid-day drops the board back to the
-  // kernel theme; persist arcadeUntil if that matters.
-  let arcadeUntil = 0;
-  const startArcade = () => (arcadeUntil = new Date(now()).setHours(24, 0, 0, 0));
+  // The Theme worn now: config.theme, unless a live override still holds. Every live
+  // override — a Target Hit's Arcade Theme or a POST /theme?name= — lasts until the
+  // next local midnight or a DELETE /theme. Last write wins, and a ?permanent switch
+  // counts as a write: it clears `live` so the new config.theme shows at once.
+  // ponytail: `live` is in-memory, so a restart drops it; it only lasts the day anyway.
+  let live: { name: string; until: number } | null = null;
+  const theme = () => (live && now() < live.until ? live.name : defaultTheme);
+  const wearUntilMidnight = (name: string) => (live = { name, until: nextMidnight(now()) });
   app.get("/wau.json", async (_req, res) => {
     const asked = ++wauAsked;
     const token = process.env.POSTHOG_PERSONAL_API_KEY;
@@ -512,7 +536,7 @@ export async function startServer(port: number, options: Options = {}) {
         console.log(
           `WAU target hit: ${next.targetPercent}% sound=${audible ? "clip" : "silent (quiet hours)"}`,
         );
-        startArcade();
+        wearUntilMidnight("arcade");
         broadcast({
           type: "wau-target-hit",
           audible,
@@ -532,18 +556,20 @@ export async function startServer(port: number, options: Options = {}) {
     }
   });
 
-  // Replays the Target Hit on demand: on the Pi, curl -X POST 127.0.0.1:3000/wau-target-hit.
+  // Routes for whoever is on the Pi itself, e.g. curl -X POST 127.0.0.1:3000/wau-target-hit.
   // Funnel proxies from loopback too; its X-Forwarded-For is what keeps the internet out.
   // That holds for HTTP Funnel only: `funnel --tcp` adds no header and would let it through.
-  app.post("/wau-target-hit", (req, res) => {
+  const piOnly: RequestHandler = (req, res, next) => {
     const loopback = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
       req.socket.remoteAddress ?? "",
     );
-    if (!loopback || req.headers["x-forwarded-for"] !== undefined) {
-      res.sendStatus(403);
-      return;
-    }
-    startArcade();
+    if (!loopback || req.headers["x-forwarded-for"] !== undefined) res.sendStatus(403);
+    else next();
+  };
+
+  // Replays the Target Hit on demand.
+  app.post("/wau-target-hit", piOnly, (_req, res) => {
+    wearUntilMidnight("arcade");
     broadcast({
       type: "wau-target-hit",
       audible: soundAllowed(),
@@ -551,6 +577,44 @@ export async function startServer(port: number, options: Options = {}) {
       targetWau: lastWau?.targetWau,
       targetPercent: lastWau?.targetPercent,
     });
+    res.sendStatus(204);
+  });
+
+  // Swaps the Theme to ?name= by hand until local midnight (or DELETE /theme). With
+  // &permanent it becomes config.theme instead, written to config.json so it survives
+  // restarts. A missing or repeated ?name is a 400; one naming no Theme is a 404.
+  app.post("/theme", piOnly, (req, res) => {
+    const name = req.query.name;
+    if (typeof name !== "string") {
+      res.sendStatus(400);
+      return;
+    }
+    if (!isTheme(name)) {
+      res.sendStatus(404);
+      return;
+    }
+    if ("permanent" in req.query) {
+      // Re-read rather than reuse `config`: the operator may have edited the file since
+      // boot. Write-then-rename so a crash mid-write leaves the old file whole.
+      try {
+        const onDisk = JSON.parse(readFileSync(configPath, "utf8"));
+        onDisk.theme = name;
+        writeFileSync(`${configPath}.tmp`, JSON.stringify(onDisk, null, 2) + "\n");
+        renameSync(`${configPath}.tmp`, configPath);
+      } catch (error) {
+        console.warn(`Could not save theme to ${configPath}: ${error}`);
+        res.sendStatus(500);
+        return;
+      }
+      defaultTheme = name;
+      live = null;
+    } else wearUntilMidnight(name);
+    broadcast(snapshot());
+    res.sendStatus(204);
+  });
+  app.delete("/theme", piOnly, (_req, res) => {
+    live = null;
+    broadcast(snapshot());
     res.sendStatus(204);
   });
 
@@ -563,15 +627,18 @@ export async function startServer(port: number, options: Options = {}) {
   //                "openPrs":[{repo, number, title, actor}, ...],
   //                "mvp":{"names":[<string>, ...],"count":<number>}|null,
   //                "devDeploy":{"actor":<string>,"at":<ms>,"repo":<string>,"run":<number>}|null,
-  //                "arcade":true|false}
+  //                "theme":<string>}
   //               feed is oldest first and holds the last 24h, each entry stamped with
   //               the server time it happened; openPrs is the current set of open PRs
   //               (state, so no 24h expiry) — what's in flight now, each with the
   //               GitHub login of its author; mvp names all Actors tied for today's
   //               lead, null until today has an event; devDeploy is the last teammate
-  //               to deploy to dev, null until one has; arcade is whether the board wears
-  //               the Arcade Theme — on from a Target Hit until local midnight, when a
-  //               fresh snapshot carries it off.
+  //               to deploy to dev, null until one has; theme names the Theme the board
+  //               wears (a file in public/themes/) — config.theme, else a live override:
+  //               "arcade" from a Target Hit or whatever a loopback POST /theme?name=
+  //               set, until local midnight (when a fresh snapshot carries it off) or a
+  //               DELETE /theme. POST /theme?name=<name>&permanent rewrites config.theme
+  //               itself. Each change is pushed as a fresh snapshot.
   //   live:       <domain event> = {"type":"pr-merged"|..., repo, number, title, actor}
   //               actor is the GitHub login of whoever did it (the merger for a
   //               pr-merged, the reviewer for a review, the commenter for a comment),
@@ -597,7 +664,7 @@ export async function startServer(port: number, options: Options = {}) {
     openPrs,
     mvp: todaysMvp(),
     devDeploy,
-    arcade: now() < arcadeUntil,
+    theme: theme(),
   });
   wss.on("connection", (socket) => socket.send(JSON.stringify(snapshot())));
 
@@ -925,12 +992,12 @@ export async function startServer(port: number, options: Options = {}) {
     // The MVP is derived on read, so a display connected across local midnight would
     // keep yesterday's leader until something else happened. Remembering the day we
     // last pushed is what keeps this to one broadcast rather than one per tick.
-    // The Arcade Theme ends at that same midnight; checked on its own so a clock that
+    // A live Theme ends at that same midnight; checked on its own so a clock that
     // jumps doesn't strand it, and folded into the one push so the rollover stays one.
-    const arcadeOver = arcadeUntil !== 0 && at.getTime() >= arcadeUntil;
-    if (startOfDay(at.getTime()) !== mvpDay || arcadeOver) {
+    const liveOver = live !== null && at.getTime() >= live.until;
+    if (startOfDay(at.getTime()) !== mvpDay || liveOver) {
       mvpDay = startOfDay(at.getTime());
-      if (arcadeOver) arcadeUntil = 0;
+      if (liveOver) live = null;
       broadcast(snapshot());
     }
     const hhmm = `${at.getHours()}`.padStart(2, "0") + ":" + `${at.getMinutes()}`.padStart(2, "0");

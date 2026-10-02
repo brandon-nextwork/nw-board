@@ -17,5 +17,6 @@
     "some-github-login": "Firstname"
   },
   "devDeployWorkflow": "env-dev.yaml",
-  "newsFeedUrl": "https://techcrunch.com/category/artificial-intelligence/feed/"
+  "newsFeedUrl": "https://techcrunch.com/category/artificial-intelligence/feed/",
+  "theme": "kernel"
 }

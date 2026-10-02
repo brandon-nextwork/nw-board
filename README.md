@@ -79,13 +79,48 @@ Note: a green 204 in GitHub's webhook UI isn't proof it was ours — a repo can
 have other webhooks on it (a chat notifier, say) returning their own 204s.
 Check by the hook's `config.url`, then confirm the delivery id in the logs.
 
+## Themes
+
+The board wears one Theme at a time: its palette, type and decorations. Each is a
+file in `public/themes/`; `kernel` (the default), `arcade` and `neobrutal` ship
+with the repo.
+
+Set the default with `"theme": "<name>"` in `config.json` and restart the server.
+It refuses to start on a name with no file.
+
+Switch from the machine running the server:
+
+```sh
+curl -X POST 'http://127.0.0.1:3000/theme?name=neobrutal'            # wear it until local midnight
+curl -X POST 'http://127.0.0.1:3000/theme?name=neobrutal&permanent'  # make it the default
+curl -X DELETE http://127.0.0.1:3000/theme                           # back to the default now
+```
+
+A live switch lasts until local midnight, `DELETE /theme`, or a server restart,
+then the default comes back. `&permanent` rewrites `"theme"` in `config.json`, so
+it survives restarts, and shows at once over any live switch. A Weekly WAU target
+hit puts on `arcade` until local midnight, the same way as a live switch. Whichever
+was set last wins.
+
+Every connected display reloads into the new Theme once no takeover or Day Chime
+is playing or queued. Both routes answer only loopback requests without an
+`X-Forwarded-For` header; if you put a proxy in front of the board, make sure it
+sets that header.
+
+To add a Theme, copy `public/themes/kernel.js` to `public/themes/<name>.js`, change
+its values, and add it to `THEMES` in `public/themes/index.js`. Custom fonts go in
+`public/fonts/` with an `@font-face` in `public/fonts.css`, and in the Theme's
+`preload` list so they load before the board draws. `npm test` fails on a Theme
+missing a palette key or a field the client reads, or one left out of `THEMES`.
+
 ## Configuration
 
 `config.json` holds Tracked Repos, Quiet Hours, Day Chime times, and the login →
 first-name map. `devDeployWorkflow` is the file name of the deploy-to-dev
 workflow whose last successful run names who's in dev. `newsFeedUrl` is the RSS
 or Atom feed shown in the bottom ticker; the example uses TechCrunch's AI feed.
-Feeds larger than 1 MiB are rejected. The server won't start without the file.
+Feeds larger than 1 MiB are rejected. `theme` is the default Theme (see
+[Themes](#themes)). The server won't start without the file.
 
 It is **gitignored** — it names your repos and your team, so it stays out of a
 public repo. Copy the template and fill it in:
