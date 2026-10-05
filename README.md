@@ -99,9 +99,9 @@ curl -X DELETE http://127.0.0.1:3000/theme                           # back to t
 
 A live switch lasts until local midnight, `DELETE /theme`, or a server restart,
 then the default comes back. `&permanent` rewrites `"theme"` in `config.json`, so
-it survives restarts, and shows at once over any live switch. A Weekly WAU target
-hit puts on `arcade` until local midnight, the same way as a live switch. Whichever
-was set last wins.
+it survives restarts, and shows at once over any live switch. A Target Hit (today's
+new WAU beating the same weekday last week) puts on `arcade` until local midnight,
+the same way as a live switch. Whichever was set last wins.
 
 Every connected display reloads into the new Theme once no takeover or Day Chime
 is playing or queued. Both routes answer only loopback requests without an
