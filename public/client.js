@@ -678,7 +678,7 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
 // --------------------------------------------------------------------------------
 
 const wauHeader = T.decorations.headers?.wau;
-const wauPanel = panel(24, 712, 1872, 248, "WEEKLY WAU GROWTH", C.ink, wauHeader);
+const wauPanel = panel(24, 712, 1872, 272, "WEEKLY WAU GROWTH", C.ink, wauHeader);
 const wauStatus = label("LOADING...", 24, C.dim);
 wauStatus.anchor.set(1, 0);
 wauStatus.position.set(1852, 16);
@@ -827,19 +827,31 @@ function renderWau(data, stale = false) {
       value.position.set(x(index) + offset + barWidth / 2, plot.y + plot.height + 4);
     });
   }
-  // Today's pair gets a frame, green once it beats the same day last week (the
-  // Target Hit). Old cached payloads carry no today: no frame.
+  // Under each day so far, a green tick if it beat the same day last week (today's
+  // is the Target Hit), else a grey cross. Old cached payloads carry no today: no marks.
   const today = Number.isInteger(snapshot.today) && snapshot.today >= 0 && snapshot.today < 7
     ? snapshot.today
     : -1;
-  const beaten = today >= 0 && snapshot.daily[today].current > snapshot.daily[today].previous;
-  if (today >= 0)
-    chartLines
-      .rect(x(today) - barWidth - 8, plot.y - 6, barWidth * 2 + 16, plot.height + 27)
-      .stroke({ width: chart?.outline ?? 2, color: beaten ? C.green : C.panelEdge });
+  const markY = plot.y + plot.height + 50;
+  for (let index = 0; index <= today; index++) {
+    const { current, previous } = snapshot.daily[index];
+    const cx = x(index);
+    if (current > previous)
+      chartLines
+        .moveTo(cx - 7, markY)
+        .lineTo(cx - 2, markY + 5)
+        .lineTo(cx + 7, markY - 5)
+        .stroke({ width: 3, color: C.green });
+    else
+      chartLines
+        .moveTo(cx - 5, markY - 5)
+        .lineTo(cx + 5, markY + 5)
+        .moveTo(cx + 5, markY - 5)
+        .lineTo(cx - 5, markY + 5)
+        .stroke({ width: 3, color: C.dim });
+  }
   dayLabels.forEach((day, index) => {
     day.text = (snapshot.daily[index].label ?? `D${index + 1}`).slice(0, 3).toUpperCase();
-    day.style.fill = index !== today ? C.dim : beaten ? C.green : C.ink;
     day.position.set(x(index), plot.y + plot.height + 22);
   });
 }
@@ -869,8 +881,9 @@ async function loadWau() {
 // AI News ticker: RSS headlines loop forever across a strip at the bottom.
 // --------------------------------------------------------------------------------
 
-const TICKER_Y = 968;
-const TICKER_H = 96;
+const TICKER_Y = 992;
+const TICKER_H = 72;
+const TICKER_TEXT_Y = TICKER_Y + 20; // 32px type, centred in the strip
 const TICKER_GAP = 110;
 const TICKER_STEP = 2; // px per 60Hz frame — 120 px/s, a lap of one 1920px screen every 16s
 
@@ -903,26 +916,26 @@ function tickerSequence(headlines) {
   if (chips) {
     // Neobrutal: the marker is a sticker, padded inside its slot.
     const marker = label("AI NEWS", 32, stickerInk(chips.news));
-    marker.position.set(12, TICKER_Y + 32);
+    marker.position.set(12, TICKER_TEXT_Y);
     const slot = new Container();
     slot.addChild(sticker(new Graphics(), marker, chips.news), marker);
     put(slot);
   } else {
     const marker = label("★ AI NEWS ★", 32, C.green);
-    marker.position.y = TICKER_Y + 32;
+    marker.position.y = TICKER_TEXT_Y;
     put(marker);
   }
   if (!headlines.length) {
     const none = label("AI NEWS UNAVAILABLE — RETRYING", 32, C.dim);
-    none.position.y = TICKER_Y + 32;
+    none.position.y = TICKER_TEXT_Y;
     put(none);
   }
   for (const headline of headlines) {
     const item = new Container();
     const bullet = label("◆", 32, C.amber, chips ? { stroke: { color: C.ink, width: 4 } } : undefined);
-    bullet.position.y = TICKER_Y + 32;
+    bullet.position.y = TICKER_TEXT_Y;
     const text = label(clip(headline, 100), 32, C.ink);
-    text.position.set(bullet.width + 24, TICKER_Y + 32);
+    text.position.set(bullet.width + 24, TICKER_TEXT_Y);
     item.addChild(bullet, text);
     put(item);
   }
@@ -2174,7 +2187,7 @@ const sampleWau = {
   targetWau: 17518,
   targetPercent: 33.7,
   activationPercent: 4.5,
-  today: 2, // Monday, still short of last Monday: frame without the green
+  today: 2, // Monday, still short of last Monday: ticks for Sat and Sun, a cross for Mon
   daily: [2869, 1679, 1503, 0, 0, 0, 0].map((current, index) => ({
     day: index + 1,
     label: ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][index],
