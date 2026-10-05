@@ -827,8 +827,19 @@ function renderWau(data, stale = false) {
       value.position.set(x(index) + offset + barWidth / 2, plot.y + plot.height + 4);
     });
   }
+  // Today's pair gets a frame, green once it beats the same day last week (the
+  // Target Hit). Old cached payloads carry no today: no frame.
+  const today = Number.isInteger(snapshot.today) && snapshot.today >= 0 && snapshot.today < 7
+    ? snapshot.today
+    : -1;
+  const beaten = today >= 0 && snapshot.daily[today].current > snapshot.daily[today].previous;
+  if (today >= 0)
+    chartLines
+      .rect(x(today) - barWidth - 8, plot.y - 6, barWidth * 2 + 16, plot.height + 27)
+      .stroke({ width: chart?.outline ?? 2, color: beaten ? C.green : C.panelEdge });
   dayLabels.forEach((day, index) => {
     day.text = (snapshot.daily[index].label ?? `D${index + 1}`).slice(0, 3).toUpperCase();
+    day.style.fill = index !== today ? C.dim : beaten ? C.green : C.ink;
     day.position.set(x(index), plot.y + plot.height + 22);
   });
 }
@@ -1532,9 +1543,9 @@ function mergedTakeover(event, done) {
 }
 
 /**
- * wau-target-hit: the weekly WAU target crossing 100%. Rarer than a merge and
- * nobody's PR, so it holds the board longer: the confetti keeps raining and the
- * fireworks re-fire until the dim lifts.
+ * wau-target-hit: today's new WAU beating the same weekday last week. Rarer than
+ * a merge and nobody's PR, so it holds the board longer: the confetti keeps
+ * raining and the fireworks re-fire until the dim lifts.
  */
 function wauTakeover(event, done) {
   // No PR and no Actor, so the shared caption and credit start empty and get the
@@ -1545,10 +1556,11 @@ function wauTakeover(event, done) {
     {},
     "",
   );
-  caption.text = "WE HIT 100% OF OUR WEEKLY WAU TARGET";
+  const day = typeof event.label === "string" && event.label ? event.label.toUpperCase() : "";
+  caption.text = `WE BEAT LAST ${day || "WEEK"}'S NEW WAU`;
   const whole = new Intl.NumberFormat().format;
-  if ([event.currentWau, event.targetWau, event.targetPercent].every(Number.isFinite))
-    credit.text = `${whole(event.currentWau)} WAU  /  ${whole(event.targetWau)} TARGET  (${event.targetPercent}%)`;
+  if ([event.current, event.previous].every(Number.isFinite))
+    credit.text = `${whole(event.current)} NEW WAU TODAY  /  ${whole(event.previous)} LAST ${day.slice(0, 3) || "WEEK"}`;
   fit();
 
   const trophy = pixelSprite("trophy16", 7);
@@ -2037,8 +2049,9 @@ app.ticker.add((ticker) => {
 // every other Ambient Event carries neither and stays silent. And
 //   {type:"day-chime", at:"HH:MM", last} marks the start and end of the workday;
 //   last:true is the day's final chime (old servers send none: 17:00 is the end).
-//   {type:"wau-target-hit", audible, currentWau, targetWau, targetPercent} is a
-//   Celebration with no PR: it takes the board over but never joins the Feed.
+//   {type:"wau-target-hit", audible, label, current, previous} is a Celebration
+//   with no PR (today's new WAU beating the same weekday last week; label is the
+//   weekday): it takes the board over but never joins the Feed.
 //   {type:"reminder", text, sound, audible} is a scheduled banner and
 //   {type:"scheduled-celebration", text, sound, audible} a scheduled takeover, both
 //   from the Admin Console; sound is "sounds/….mp3" or null (jingle). No Feed row.
@@ -2134,7 +2147,7 @@ playHeldCelebration();
 //   arcade.demo()                      — one of everything, in order
 //   arcade.event({type:"pr-merged", repo:"a/b", number:7, title:"x", audible:true})
 //   arcade.celebrate("review-approved") / arcade.ambient("pr-comment") / arcade.chime("09:00")
-//   arcade.celebrate("wau-target-hit") — the WAU target takeover with sample numbers
+//   arcade.celebrate("wau-target-hit") — the Target Hit takeover with sample numbers
 //   arcade.celebrate("scheduled-celebration") / arcade.reminder("Standup in 5")
 //     — the Admin Console's scheduled takeover and banner with sample copy
 //   arcade.play("pr-merged")           — sound only
@@ -2161,6 +2174,7 @@ const sampleWau = {
   targetWau: 17518,
   targetPercent: 33.7,
   activationPercent: 4.5,
+  today: 2, // Monday, still short of last Monday: frame without the green
   daily: [2869, 1679, 1503, 0, 0, 0, 0].map((current, index) => ({
     day: index + 1,
     label: ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][index],
@@ -2180,7 +2194,7 @@ window.arcade = {
     celebrate(
       type,
       type === "wau-target-hit"
-        ? { type, currentWau: 17602, targetWau: sampleWau.targetWau, targetPercent: 100.5 }
+        ? { type, label: "Monday", current: 2214, previous: 2103 }
         : type === "scheduled-celebration"
           ? { type, text: "Happy birthday Maximus! Cake in the kitchen at 3pm", sound: null }
           : sample(type),

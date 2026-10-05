@@ -677,6 +677,8 @@ export async function startServer(port: number, options: Options = {}) {
   let warming = false;
   let wauAsked = 0;
   let wauApplied = 0;
+  let celebratedOn = "";
+  let lastWauDay = "";
   // The Theme worn now: config.theme, unless a live override still holds. Every live
   // override — a Target Hit's Arcade Theme or a POST /theme?name= — lasts until the
   // next local midnight or a DELETE /theme. Last write wins, and a ?permanent switch
@@ -687,6 +689,12 @@ export async function startServer(port: number, options: Options = {}) {
   const wearUntilMidnight = (name: string) => (live = { name, until: nextMidnight(now()) });
   app.get("/wau.json", async (_req, res) => {
     const asked = ++wauAsked;
+    // Index into `daily` (Sat=0 … Fri=6) by the Pi's local clock; the normaliser has none.
+    // Read after the fetch, so a read that spans midnight counts for the new day.
+    const clock = () => {
+      const at = new Date(now());
+      return { today: (at.getDay() + 1) % 7, dayKey: at.toDateString() };
+    };
     const token = process.env.POSTHOG_PERSONAL_API_KEY;
     if (!token) {
       res.sendStatus(503);
@@ -722,37 +730,39 @@ export async function startServer(port: number, options: Options = {}) {
       if (!response.ok) throw new Error(`PostHog returned ${response.status}`);
       const payload = await limitedText(response, "WAU dashboard response exceeds 1 MiB");
       const next = normalizeWauDashboard(JSON.parse(payload));
+      const { today, dayKey } = clock();
       // A slow read asked before the one already applied holds older cache; letting it
-      // overwrite lastWau would re-arm the crossing below and celebrate twice.
+      // overwrite lastWau would re-arm the crossing below.
       if (asked < wauApplied) {
-        res.set("Cache-Control", "no-store").json(next);
+        res.set("Cache-Control", "no-store").json({ ...next, today });
         return;
       }
       wauApplied = asked;
-      // Crossing only, so a restart that boots already over target stays quiet.
-      // ponytail: a crossing while the server is down is missed; persist the last
-      // celebrated Sat–Fri cycle if that matters.
-      if (lastWau && lastWau.targetPercent < 100 && next.targetPercent >= 100) {
+      // Today's row beating the same weekday last week. Crossing only, so a restart
+      // that boots already ahead stays quiet, and once per local day. A read from an
+      // earlier day counts as behind: on Saturday its row 0 is last cycle's Saturday.
+      // ponytail: a crossing while the server is down is missed, and a restart forgets
+      // celebratedOn; persist it if a second hit the same day matters.
+      const beats = (wau: typeof next) => wau.daily[today].current > wau.daily[today].previous;
+      const wasAhead = lastWauDay === dayKey && beats(lastWau!);
+      if (lastWau && !wasAhead && beats(next) && celebratedOn !== dayKey) {
+        celebratedOn = dayKey;
+        const { label, current, previous } = next.daily[today];
         const audible = soundAllowed();
         console.log(
-          `WAU target hit: ${next.targetPercent}% sound=${audible ? "clip" : "silent (quiet hours)"}`,
+          `WAU daily beat: ${label} ${current} > ${previous} sound=${audible ? "clip" : "silent (quiet hours)"}`,
         );
         wearUntilMidnight("arcade");
-        broadcast({
-          type: "wau-target-hit",
-          audible,
-          currentWau: next.currentWau,
-          targetWau: next.targetWau,
-          targetPercent: next.targetPercent,
-        });
+        broadcast({ type: "wau-target-hit", audible, label, current, previous });
       }
       lastWau = next;
-      res.set("Cache-Control", "no-store").json(lastWau);
+      lastWauDay = dayKey;
+      res.set("Cache-Control", "no-store").json({ ...lastWau, today });
     } catch (error) {
       console.warn(`WAU dashboard unavailable: ${error}`);
       // The cached read sometimes hangs or misses a tile; one bad read should not turn
       // the panel STALE, so serve the last good numbers under their own fetchedAt.
-      if (lastWau) res.set("Cache-Control", "no-store").json(lastWau);
+      if (lastWau) res.set("Cache-Control", "no-store").json({ ...lastWau, today: clock().today });
       else res.sendStatus(502);
     }
   });
@@ -795,15 +805,16 @@ export async function startServer(port: number, options: Options = {}) {
     broadcast(snapshot());
   };
 
-  /** Replays the Target Hit on demand, with the last WAU numbers read. */
+  /** Replays the Target Hit on demand, with today's row from the last WAU read. */
   const replayTargetHit = () => {
     wearUntilMidnight("arcade");
+    const row = lastWau?.daily[(new Date(now()).getDay() + 1) % 7];
     broadcast({
       type: "wau-target-hit",
       audible: soundAllowed(),
-      currentWau: lastWau?.currentWau,
-      targetWau: lastWau?.targetWau,
-      targetPercent: lastWau?.targetPercent,
+      label: row?.label,
+      current: row?.current,
+      previous: row?.previous,
     });
   };
 
@@ -890,10 +901,11 @@ export async function startServer(port: number, options: Options = {}) {
   //               A Reminder is a banner; a Scheduled Celebration takes the board over.
   //               Neither joins the Feed. "sound" is the clip to play, if any, and
   //               "audible" is Quiet Hours at that minute, as for every other sound.
-  //   wau target: {"type":"wau-target-hit","audible":true|false, currentWau, targetWau,
-  //               targetPercent} — the WAU panel's weekly target crossing 100%: a
-  //               Celebration with no PR, "audible" gated by Quiet Hours.
-  //               Also sent on demand by a loopback POST /wau-target-hit, with the last read.
+  //   wau target: {"type":"wau-target-hit","audible":true|false, label, current, previous}
+  //               — today's new WAU (its daily row) beating the same weekday last week,
+  //               at most once a local day: a Celebration with no PR, "audible" gated by
+  //               Quiet Hours. Also sent on demand by a loopback POST
+  //               /wau-target-hit, with today's row from the last read.
   // No domain event type is called "snapshot", "day-chime", "wau-target-hit", "reminder" or
   // "scheduled-celebration", so `type` tells them apart.
   const broadcast = (message: unknown) => {

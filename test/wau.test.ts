@@ -37,7 +37,8 @@ const tile = (id: number, result: unknown[]) => ({ id, insight: { result } });
 // The saved insight labels rows by weekday of the Sat–Fri cycle and carries a
 // daily-target column the board does not use.
 const DAYS = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-const dashboard = (targetPercent = "33.7%") => ({
+/** `rows` overrides a day's [current, previous] by index (Sat=0 … Fri=6). */
+const dashboard = (targetPercent = "33.7%", rows: Record<number, number[]> = {}) => ({
   results: [
     tile(7119738, [[5906]]),
     tile(7119740, [[17518]]),
@@ -45,7 +46,7 @@ const dashboard = (targetPercent = "33.7%") => ({
     tile(10992630, [["4.5%"]]),
     tile(
       7119735,
-      DAYS.map((label, day) => [label, 1000 + day, 900 + day, 2503]),
+      DAYS.map((label, day) => [label, ...(rows[day] ?? [1000 + day, 900 + day]), 2503]),
     ),
   ],
 });
@@ -61,7 +62,7 @@ test("the WAU route answers from PostHog's cache and refreshes it in the backgro
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(dashboard()));
   });
-  running = await startServer(0, { configPath, posthogApiBase: base });
+  running = await startServer(0, { configPath, posthogApiBase: base, now: () => thursdayAt(10) });
 
   const response = await fetch(`http://127.0.0.1:${running.port}/wau.json`);
   const body = await response.json();
@@ -95,6 +96,7 @@ test("the WAU route answers from PostHog's cache and refreshes it in the backgro
       current: 1000 + day,
       previous: 900 + day,
     })),
+    today: 5,
   });
   expect(JSON.stringify(body)).not.toContain("test-posthog-token");
 });
@@ -225,56 +227,115 @@ test.each([
 /** Quiet Hours are local time: 13 August 2026 is a Thursday. */
 const thursdayAt = (hour: number) => new Date(2026, 7, 13, hour).getTime();
 
-/** Serve each PostHog read the next target percent, and collect what the board hears. */
-async function targetHits(percents: string[], clock = thursdayAt(10)) {
+/** A read whose Thursday row (today on `thursdayAt`) is `current` against `previous`. */
+const thursday = (current: number, previous: number, percent?: string) =>
+  dashboard(percent, { 5: [current, previous] });
+
+/** Serve each PostHog read the next dashboard, and collect what the board hears. */
+async function targetHits(reads: ReturnType<typeof dashboard>[], now = () => thursdayAt(10)) {
   const base = await upstream((req, res) => {
     if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
     res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify(dashboard(percents.shift())));
+    res.end(JSON.stringify(reads.shift()));
   });
-  running = await startServer(0, { configPath, posthogApiBase: base, now: () => clock });
+  running = await startServer(0, { configPath, posthogApiBase: base, now });
   const { ws, messages } = await connectedDisplay(running.port);
-  while (percents.length) await fetch(`http://127.0.0.1:${running.port}/wau.json`);
+  while (reads.length) await fetch(`http://127.0.0.1:${running.port}/wau.json`);
   await sleep(50);
   ws.close();
   return messages.filter((message) => message.type === "wau-target-hit");
 }
 
-test("the WAU target crossing 100% is broadcast as a Target Hit", async () => {
-  expect(await targetHits(["95%", "100%"])).toEqual([
-    {
-      type: "wau-target-hit",
-      audible: true,
-      currentWau: 5906,
-      targetWau: 17518,
-      targetPercent: 100,
-    },
+test("today's new WAU beating the same weekday last week is broadcast as a Target Hit", async () => {
+  expect(await targetHits([thursday(900, 1000), thursday(1001, 1000)])).toEqual([
+    { type: "wau-target-hit", audible: true, label: "Thursday", current: 1001, previous: 1000 },
   ]);
 });
 
-test("a first read already over target is no crossing", async () => {
-  expect(await targetHits(["100%", "100%"])).toEqual([]);
+test("a first read already beating last week is no crossing", async () => {
+  expect(await targetHits([thursday(1001, 1000), thursday(1002, 1000)])).toEqual([]);
 });
 
-test("staying over target celebrates only the one crossing", async () => {
-  expect(await targetHits(["99.9%", "100%", "100%", "101%"])).toHaveLength(1);
+test("staying ahead of last week celebrates only the one crossing", async () => {
+  expect(
+    await targetHits([thursday(900, 1000), thursday(1001, 1000), thursday(1050, 1000)]),
+  ).toHaveLength(1);
+});
+
+test("drawing level with last week is not beating it", async () => {
+  expect(await targetHits([thursday(900, 1000), thursday(1000, 1000)])).toEqual([]);
+});
+
+test("another weekday's row beating last week does not fire", async () => {
+  const behind = { 5: [900, 1000] };
+  expect(
+    await targetHits([
+      dashboard(undefined, { ...behind, 4: [900, 1000] }),
+      dashboard(undefined, { ...behind, 4: [1100, 1000] }),
+    ]),
+  ).toEqual([]);
+});
+
+test("dipping back and crossing again the same day celebrates once", async () => {
+  expect(
+    await targetHits([
+      thursday(900, 1000),
+      thursday(1001, 1000),
+      thursday(990, 1000),
+      thursday(1010, 1000),
+    ]),
+  ).toHaveLength(1);
+});
+
+test("the next day's crossing celebrates again", async () => {
+  const reads = [
+    dashboard(undefined, { 5: [900, 1000], 6: [0, 1000] }),
+    dashboard(undefined, { 5: [1001, 1000], 6: [0, 1000] }),
+    dashboard(undefined, { 5: [1001, 1000], 6: [0, 1000] }),
+    dashboard(undefined, { 5: [1001, 1000], 6: [1001, 1000] }),
+  ];
+  // The clock is read once a read is served: the first two land on Thursday, the last two on Friday.
+  const now = () => (reads.length >= 2 ? thursdayAt(10) : new Date(2026, 7, 14, 10).getTime());
+  expect(await targetHits(reads, now)).toMatchObject([{ label: "Thursday" }, { label: "Friday" }]);
+});
+
+test("Saturday's crossing fires even though last cycle's Saturday was ahead", async () => {
+  // Friday's read still holds last cycle, whose Saturday beat the one before; the
+  // first Saturday read is already ahead (PostHog's cache lags) and should celebrate.
+  const reads = [dashboard(undefined, { 0: [1100, 1000] }), dashboard(undefined, { 0: [1001, 1000] })];
+  const now = () =>
+    reads.length >= 1 ? new Date(2026, 7, 14, 23).getTime() : new Date(2026, 7, 15, 10).getTime();
+  expect(await targetHits(reads, now)).toMatchObject([{ label: "Saturday", current: 1001 }]);
+});
+
+test("the weekly target reaching 100% is no longer a Target Hit", async () => {
+  expect(
+    await targetHits([thursday(900, 1000, "95%"), thursday(900, 1000, "100%")]),
+  ).toEqual([]);
 });
 
 test("a Target Hit in Quiet Hours is flagged silent", async () => {
-  expect(await targetHits(["95%", "100%"], thursdayAt(22))).toMatchObject([
-    { type: "wau-target-hit", audible: false },
-  ]);
+  expect(
+    await targetHits([thursday(900, 1000), thursday(1001, 1000)], () => thursdayAt(22)),
+  ).toMatchObject([{ type: "wau-target-hit", audible: false }]);
 });
 
-test("a slow read of older cache landing after the crossing does not re-arm it", async () => {
-  // Read 2 asks first but answers last, with the cache from before the crossing.
-  const reads: [string, number][] = [["95%", 0], ["99%", 200], ["100%", 0], ["100%", 0]];
+test("a slow read of older cache landing after the crossing does not replace it", async () => {
+  // Read 2 asks first but answers last, with the cache from before the crossing; read 4
+  // fails, so it serves whatever the route kept.
+  const reads: [ReturnType<typeof dashboard> | undefined, number][] = [
+    [thursday(900, 1000), 0],
+    [thursday(950, 1000), 200],
+    [thursday(1001, 1000), 0],
+    [undefined, 0],
+  ];
   const base = await upstream((req, res) => {
     if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
-    const [percent, delay] = reads.shift()!;
+    const [read, delay] = reads.shift()!;
     setTimeout(() => {
+      if (!read) return res.writeHead(500).end();
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify(dashboard(percent)));
+      res.end(JSON.stringify(read));
     }, delay);
   });
   running = await startServer(0, { configPath, posthogApiBase: base, now: () => thursdayAt(10) });
@@ -285,10 +346,11 @@ test("a slow read of older cache landing after the crossing does not re-arm it",
   await sleep(50);
   await wau();
   await slow;
-  await wau();
+  const kept = await (await wau()).json();
   await sleep(50);
   ws.close();
   expect(messages.filter((message) => message.type === "wau-target-hit")).toHaveLength(1);
+  expect(kept.daily[5].current).toBe(1001);
 });
 
 test("a loopback POST replays the Target Hit", async () => {
@@ -302,6 +364,17 @@ test("a loopback POST replays the Target Hit", async () => {
   expect(response.status).toBe(204);
   expect(messages.filter((message) => message.type === "wau-target-hit")).toEqual([
     { type: "wau-target-hit", audible: true },
+  ]);
+});
+
+test("a replay after a read carries today's row", async () => {
+  await targetHits([thursday(900, 1000)]);
+  const { ws, messages } = await connectedDisplay(running!.port);
+  await fetch(`http://127.0.0.1:${running!.port}/wau-target-hit`, { method: "POST" });
+  await sleep(50);
+  ws.close();
+  expect(messages.filter((message) => message.type === "wau-target-hit")).toEqual([
+    { type: "wau-target-hit", audible: true, label: "Thursday", current: 900, previous: 1000 },
   ]);
 });
 
@@ -331,7 +404,7 @@ test("a display connecting after a Target Hit is told the board wears the Arcade
 });
 
 test("a PostHog crossing also puts the board in the Arcade Theme", async () => {
-  await targetHits(["95%", "100%"]);
+  await targetHits([thursday(900, 1000), thursday(1001, 1000)]);
   const { ws, messages } = await connectedDisplay(running!.port);
   await sleep(50);
   ws.close();

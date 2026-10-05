@@ -31,7 +31,7 @@ const JINGLE_NOTES = {
     tone(880, 0.26, 0.16, { type: "triangle", gain: 0.05 });
     noise(0, 0.22, 0.03);
   },
-  // The weekly WAU target: a longer fanfare, then a crowd of short noise bursts
+  // The Target Hit (today beating the same day last week): a longer fanfare, then a crowd of short noise bursts
   // clapping under a decaying wash — the applause clip's stand-in.
   "wau-target-hit": (tone, noise) => {
     [523, 659, 784, 1047, 784, 1047].forEach((freq, i) => tone(freq, i * 0.12, 0.14));
