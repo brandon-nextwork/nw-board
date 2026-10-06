@@ -277,6 +277,20 @@ function normalizeWauDashboard(payload: any) {
   };
 }
 
+/**
+ * On pace for the weekly target? The pace is flat, target ÷ 7 a day (marketing's
+ * daily_target column, which the board ignores), so `elapsedDays` into the Sat–Fri
+ * cycle the week-to-date WAU should be target × elapsedDays / 7.
+ * ponytail: just after Saturday midnight `expected` is tiny, so the light swings on a
+ * handful of users (or ingestion lag); add a grace window if anyone watches then.
+ */
+function onTarget(wau: { currentWau: number; targetWau: number }, elapsedDays: number) {
+  const expected = (wau.targetWau * elapsedDays) / 7;
+  if (expected <= 0) return "on";
+  const ratio = wau.currentWau / expected;
+  return ratio >= 1 ? "on" : ratio >= 0.9 ? "behind" : "far-behind";
+}
+
 async function limitedText(response: Response, complaint = "news feed exceeds 1 MiB") {
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -691,9 +705,13 @@ export async function startServer(port: number, options: Options = {}) {
     const asked = ++wauAsked;
     // Index into `daily` (Sat=0 … Fri=6) by the Pi's local clock; the normaliser has none.
     // Read after the fetch, so a read that spans midnight counts for the new day.
+    // `elapsed` adds the fraction of today gone, for the On Target pace.
     const clock = () => {
-      const at = new Date(now());
-      return { today: (at.getDay() + 1) % 7, dayKey: at.toDateString() };
+      const t = now();
+      const at = new Date(t);
+      const today = (at.getDay() + 1) % 7;
+      const fraction = (t - startOfDay(t)) / (nextMidnight(t) - startOfDay(t));
+      return { today, dayKey: at.toDateString(), elapsed: today + fraction };
     };
     const token = process.env.POSTHOG_PERSONAL_API_KEY;
     if (!token) {
@@ -730,11 +748,13 @@ export async function startServer(port: number, options: Options = {}) {
       if (!response.ok) throw new Error(`PostHog returned ${response.status}`);
       const payload = await limitedText(response, "WAU dashboard response exceeds 1 MiB");
       const next = normalizeWauDashboard(JSON.parse(payload));
-      const { today, dayKey } = clock();
+      const { today, dayKey, elapsed } = clock();
       // A slow read asked before the one already applied holds older cache; letting it
       // overwrite lastWau would re-arm the crossing below.
       if (asked < wauApplied) {
-        res.set("Cache-Control", "no-store").json({ ...next, today });
+        res
+          .set("Cache-Control", "no-store")
+          .json({ ...next, today, onTarget: onTarget(next, elapsed) });
         return;
       }
       wauApplied = asked;
@@ -757,13 +777,19 @@ export async function startServer(port: number, options: Options = {}) {
       }
       lastWau = next;
       lastWauDay = dayKey;
-      res.set("Cache-Control", "no-store").json({ ...lastWau, today });
+      res
+        .set("Cache-Control", "no-store")
+        .json({ ...lastWau, today, onTarget: onTarget(lastWau, elapsed) });
     } catch (error) {
       console.warn(`WAU dashboard unavailable: ${error}`);
       // The cached read sometimes hangs or misses a tile; one bad read should not turn
       // the panel STALE, so serve the last good numbers under their own fetchedAt.
-      if (lastWau) res.set("Cache-Control", "no-store").json({ ...lastWau, today: clock().today });
-      else res.sendStatus(502);
+      if (lastWau) {
+        const { today, elapsed } = clock();
+        res
+          .set("Cache-Control", "no-store")
+          .json({ ...lastWau, today, onTarget: onTarget(lastWau, elapsed) });
+      } else res.sendStatus(502);
     }
   });
 
