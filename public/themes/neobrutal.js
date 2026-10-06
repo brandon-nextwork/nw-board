@@ -7,7 +7,9 @@ const INK = KERNEL["brand-950"];
 const PINK = 0xff90e8;
 
 // Archivo Black carries headings and display (>=34px: panel headings, clock, MVP,
-// stat values, takeovers); Space Grotesk 700 everything smaller, ticker included.
+// stat values, takeovers); Space Grotesk 700 everything smaller. Where the Paper
+// design picks the face per element instead (Archivo chips, Space Grotesk ticker),
+// client.js names `display` or `ui` outright.
 // fonts.css declares Archivo Black at 700, so one weight serves both faces.
 const FONT_UI = '"Space Grotesk", system-ui, sans-serif';
 const FONT_DISPLAY = '"Archivo Black", "Space Grotesk", system-ui, sans-serif';
@@ -53,6 +55,8 @@ export default {
     pillTracking: undefined,
     valueTracking: undefined,
     nameMax: 12,
+    display: FONT_DISPLAY,
+    ui: FONT_UI,
   },
   preload: ['700 34px "Archivo Black"', '700 24px "Space Grotesk"'],
   // Canary around a letterboxed scene, so the ground runs to the bezel.
@@ -66,10 +70,12 @@ export default {
     hardShadow: 10,
     marqueeShadow: PINK,
     tickerFill: PINK,
-    // Solid header bars, each with the heading ink that reads on it.
+    // Solid header bars, each with the heading ink that reads on it, its heading
+    // size, and `bar`: the centre of the 5px ink rule under it (Paper's 55px and
+    // 51px bars inside the 5px outline).
     headers: {
-      feed: { fill: KERNEL["accent-cornflower"], ink: KERNEL["white"] },
-      wau: { fill: KERNEL["accent-emerald"], ink: INK },
+      feed: { fill: KERNEL["accent-cornflower"], ink: KERNEL["white"], size: 32, bar: 62.5 },
+      wau: { fill: KERNEL["accent-emerald"], ink: INK, size: 30, bar: 58.5 },
     },
     // Event names, IN DEV, repo pills, the MVP tally and the takeover credit as
     // filled stickers. Ink text on every fill except these darker ones.
@@ -84,7 +90,7 @@ export default {
     // WAU stat boxes: white, TARGET REACHED canary.
     stats: { fill: KERNEL["white"], hot: KERNEL["accent-canary"], outline: 4 },
     // Outlined bars and swatches; canary values would vanish on white, so muted.
-    chart: { outline: 3, valueInk: KERNEL["brand-600"] },
+    chart: { outline: 3, baseline: 4, valueInk: KERNEL["brand-600"] },
     // Takeovers and Day Chimes on a tilted white card instead of a dark band.
     card: { tilt: -2, outline: 8, shadow: 18 },
   },

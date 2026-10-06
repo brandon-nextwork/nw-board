@@ -50,6 +50,20 @@ const label = (text, fontSize, fill, extra) =>
       ...extra,
     },
   });
+/**
+ * `label` extras naming the face outright (`display` or `ui`) with tracking in em,
+ * where Neobrutal's Paper design picks it per element rather than by size. Only
+ * Neobrutal sets type.display/type.ui; every other theme gets no extras.
+ */
+const face = (name, fontSize, em = 0, extra) =>
+  T.type[name] && { fontFamily: T.type[name], letterSpacing: fontSize * em, ...extra };
+
+// Neobrutal's hard shadows hang off every panel, so its panels are narrower and
+// shorter to keep clear canary between each shadow and the next panel. Shadowless
+// themes keep the full-width board.
+const SHADOW = T.decorations.hardShadow ?? 0;
+const PANEL_W = SHADOW ? 1864 : 1872;
+const chips = T.decorations.chips;
 
 const EVENTS = {
   "pr-merged": { name: "MERGED", color: C.amber, icon: "trophy" },
@@ -401,19 +415,35 @@ const rollBand = buildBackground();
 // The Neobrutal Theme's building blocks. Kernel and arcade never reach them: every
 // caller is behind a T.decorations key only neobrutal sets.
 
-/** A filled round rect with an ink outline over a hard, unblurred shadow `shadow` px down-right. */
-function slab(g, x, y, width, height, radius, fill, outline, shadow, shadowColor = C.ink) {
+/**
+ * A filled round rect with an `edge` outline over a hard, unblurred shadow `shadow` px
+ * down-right. The outline sits inside the rect, as a CSS border does, so x/y/width/height
+ * are the box's outer edge.
+ */
+function slab(g, x, y, width, height, radius, fill, outline, shadow, shadowColor = C.ink, edge = C.ink) {
   if (shadow) g.roundRect(x + shadow, y + shadow, width, height, radius).fill(shadowColor);
-  return g.roundRect(x, y, width, height, radius).fill(fill).stroke({ width: outline, color: C.ink });
+  g.roundRect(x, y, width, height, radius).fill(fill);
+  return outline ? g.stroke({ width: outline, color: edge, alignment: 1 }) : g;
 }
 
-/** Redraw `bg` as a sticker fitted around `text` (unscaled, any anchor); empty text clears it. */
-function sticker(bg, text, fill, padX = 12) {
+/**
+ * Redraw `bg` as a sticker fitted around `text` (unscaled, any anchor), `pad` [x, y]
+ * clear inside its outline as in CSS; empty text clears it. `tilt` (degrees) turns
+ * the chip and its text about the chip's centre, so the two need a parent of their own.
+ */
+function sticker(bg, text, fill, { pad = [12, 2], radius = 8, outline = 4, shadow = 4, edge, tilt } = {}) {
   bg.clear();
   if (!text.text) return bg;
-  const x = text.x - text.anchor.x * text.width - padX;
-  const y = text.y - text.anchor.y * text.height;
-  return slab(bg, x, y, text.width + padX * 2, text.height, 8, fill, 4, 4);
+  const width = text.width + (pad[0] + outline) * 2;
+  const height = text.height + (pad[1] + outline) * 2;
+  const x = text.x - text.anchor.x * text.width - pad[0] - outline;
+  const y = text.y - text.anchor.y * text.height - pad[1] - outline;
+  if (tilt) {
+    bg.parent.pivot.set(x + width / 2, y + height / 2);
+    bg.parent.position.copyFrom(bg.parent.pivot);
+    bg.parent.rotation = (tilt * Math.PI) / 180;
+  }
+  return slab(bg, x, y, width, height, radius, fill, outline, shadow, C.ink, edge);
 }
 /** Ink on a light sticker, white on a dark one. */
 const stickerInk = (fill) => (T.decorations.chips.whiteOn.includes(fill) ? C.white : C.ink);
@@ -430,10 +460,10 @@ function tilted() {
   return holder;
 }
 
-/** Redraw `g` as the takeover card: `width` x `height`, centred on x, at height `cy`. */
+/** Redraw `g` as the takeover card: `width` x `height` outside, centred on x, at height `cy`. */
 function card(g, width, height, cy) {
   const { outline, shadow } = T.decorations.card;
-  return slab(g.clear(), (W - width) / 2, cy - height / 2, width, height, 16, C.white, outline, shadow);
+  return slab(g.clear(), (W - width) / 2, cy - height / 2, width, height, 20, C.white, outline, shadow);
 }
 
 /**
@@ -447,21 +477,22 @@ function panel(x, y, width, height, title, titleColor, header) {
     // The bar is filled with square bottom corners, cut off by an ink rule, and the
     // outline goes on last so nothing covers it.
     const { outline, hardShadow } = T.decorations;
+    const { bar } = header;
     box.addChild(
       new Graphics()
         .roundRect(hardShadow, hardShadow, width, height, 12)
         .fill(C.panelEdge)
         .roundRect(0, 0, width, height, 12)
         .fill(C.panel)
-        .roundRect(0, 0, width, 68, 12)
+        .roundRect(0, 0, width, bar + 12, 12)
         .fill(header.fill)
-        .rect(0, 56, width, 12)
+        .rect(0, bar, width, 12)
         .fill(C.panel)
-        .moveTo(0, 56)
-        .lineTo(width, 56)
+        .moveTo(0, bar)
+        .lineTo(width, bar)
         .stroke({ width: outline, color: C.panelEdge })
         .roundRect(0, 0, width, height, 12)
-        .stroke({ width: outline, color: C.panelEdge }),
+        .stroke({ width: outline, color: C.panelEdge, alignment: 1 }),
     );
   } else {
     const frame = new Graphics()
@@ -474,8 +505,18 @@ function panel(x, y, width, height, title, titleColor, header) {
       .fill({ color: C.panelEdge, alpha: 0.55 });
     box.addChild(bar);
   }
-  const heading = label(title, 34, header?.ink ?? titleColor);
+  const heading = label(
+    title,
+    header?.size ?? 34,
+    header?.ink ?? titleColor,
+    header && face("display", header.size, -0.01),
+  );
   heading.position.set(20, 12);
+  if (header) {
+    // Centred on the bar, at Paper's 22px inset from the outline.
+    heading.anchor.set(0, 0.5);
+    heading.position.set(27, header.bar / 2);
+  }
   box.addChild(heading);
   layers.board.addChild(box);
   return box;
@@ -490,9 +531,9 @@ marquee.position.set(24, 16);
 layers.board.addChild(marquee);
 marquee.addChild(
   T.decorations.marqueeShadow
-    ? slab(new Graphics(), 0, 0, 1872, 168, 14, C.panelDeep, 5, T.decorations.hardShadow, T.decorations.marqueeShadow)
+    ? slab(new Graphics(), 0, 0, PANEL_W, 168, 14, C.panelDeep, 5, SHADOW, T.decorations.marqueeShadow)
     : new Graphics()
-        .roundRect(0, 0, 1872, 168, 14)
+        .roundRect(0, 0, PANEL_W, 168, 14)
         .fill({ color: C.panelDeep })
         .stroke({ width: 5, color: C.marqueeEdge }),
 );
@@ -505,31 +546,37 @@ const title = label("NEXTWORK ARCADE", 62, C.heroInk, {
 title.position.set(48, 52);
 marquee.addChild(title);
 
-const insertCoin = label("INSERT PULL REQUEST", 24, C.marqueeDim);
+const insertCoin = label("INSERT PULL REQUEST", chips ? 22 : 24, C.marqueeDim, face("ui", 22, 0.04));
 insertCoin.position.set(52, 118);
 marquee.addChild(insertCoin);
 
-const mvpCaption = label("TODAY'S MVP", 38, C.marqueeInk);
+// The marquee's right-hand column ends 48px in from its edge.
+const MVP_X = PANEL_W - 48;
+const mvpCaption = label("TODAY'S MVP", chips ? 30 : 38, C.marqueeInk, face("ui", 30, 0.02));
 mvpCaption.anchor.set(1, 0);
-mvpCaption.position.set(1824, 26);
+mvpCaption.position.set(MVP_X, 26);
 marquee.addChild(mvpCaption);
 
 // The name is right-anchored so it grows leftwards; the tally sits under its tail.
 const mvpName = label("ANYONE'S GAME", 64, C.marqueeDim);
 mvpName.anchor.set(1, 0);
-mvpName.position.set(1824, 72);
+mvpName.position.set(MVP_X, 72);
 marquee.addChild(mvpName);
 
-const chips = T.decorations.chips;
-const mvpTally = label("", 38, chips ? C.ink : C.marqueeDim);
+const mvpTally = label("", chips ? 30 : 38, chips ? C.ink : C.marqueeDim, face("display", 30, 0, { lineHeight: 36 }));
 mvpTally.anchor.set(1, 1);
 // Bottom-aligned with the name's baseline, clear of the marquee's lower border.
-mvpTally.position.set(1824, 138);
-// Neobrutal's sticker behind the tally, redrawn with it in setMvp.
+// Neobrutal's sticker (12px padding, 3px outline) ends at the column edge instead.
+mvpTally.position.set(MVP_X - (chips ? 15 : 0), 138);
+// Neobrutal's sticker behind the tally, redrawn with it in setMvp; the holder is
+// what tilts the pair.
 const mvpTallyChip = new Graphics();
-marquee.addChild(mvpTallyChip, mvpTally);
+const mvpTallyHolder = new Container();
+mvpTallyHolder.addChild(mvpTallyChip, mvpTally);
+marquee.addChild(mvpTallyHolder);
 
-const bulbs = Array.from({ length: 44 }, (_, i) => {
+// The flat Neobrutal marquee is print, not a lit sign: no bulbs.
+const bulbs = T.decorations.flat ? [] : Array.from({ length: 44 }, (_, i) => {
   const bulb = new Sprite(pixelTexture("star"));
   bulb.anchor.set(0.5);
   bulb.scale.set(1.4);
@@ -594,13 +641,21 @@ Assets.load({
 // --------------------------------------------------------------------------------
 
 const FEED_ROWS = 7;
+// Where the first row sits and the step between rows; Neobrutal's shorter panel
+// packs them tighter.
+const ROW_Y = SHADOW ? 80 : 84;
+const ROW_PITCH = SHADOW ? 52 : 54;
 const feedHeader = T.decorations.headers?.feed;
-const feedPanel = panel(24, 204, 1872, 496, "LIVE FEED // LAST 24H", C.ink, feedHeader);
+const feedPanel = panel(24, 204, PANEL_W, SHADOW ? 464 : 496, "LIVE FEED // LAST 24H", C.ink, feedHeader);
 
 // Wall clock on the feed header — the board doubles as the office clock.
-const wallClock = label("", 34, feedHeader?.ink ?? C.ink);
+const wallClock = label("", feedHeader?.size ?? 34, feedHeader?.ink ?? C.ink, feedHeader && face("display", feedHeader.size));
 wallClock.anchor.set(1, 0);
 wallClock.position.set(1852, 12);
+if (feedHeader) {
+  wallClock.anchor.set(1, 0.5);
+  wallClock.position.set(PANEL_W - 27, feedHeader.bar / 2);
+}
 feedPanel.addChild(wallClock);
 setInterval(() => {
   const t = new Date()
@@ -610,9 +665,13 @@ setInterval(() => {
 }, 1000);
 // The last human to deploy to dev, centred on the header: the board answers
 // "who put that on dev?" without anyone opening GitHub.
-const devDeployLabel = label("", 34, chips ? C.ink : C.green);
+const devDeployLabel = label("", chips ? 26 : 34, chips ? C.ink : C.green, face("display", 26, 0, { lineHeight: 32 }));
 devDeployLabel.anchor.set(0.5, 0);
 devDeployLabel.position.set(936, 12);
+if (feedHeader) {
+  devDeployLabel.anchor.set(0.5);
+  devDeployLabel.position.set(PANEL_W / 2, feedHeader.bar / 2);
+}
 const devDeployChip = new Graphics();
 feedPanel.addChild(devDeployChip, devDeployLabel);
 /** {actor, at} from the snapshot, or null when nobody on the roster has deployed. */
@@ -621,7 +680,7 @@ function setDevDeploy(devDeploy) {
   devDeployLabel.text = devDeploy
     ? `IN DEV: ${String(devDeploy.actor).split(" ")[0].toUpperCase()}`
     : "";
-  if (chips) sticker(devDeployChip, devDeployLabel, chips.dev);
+  if (chips) sticker(devDeployChip, devDeployLabel, chips.dev, { pad: [14, 2], radius: 10 });
 }
 
 const feedEmpty = label("...WAITING FOR PLAYERS...", 30, C.dim);
@@ -634,37 +693,40 @@ feedPanel.addChild(feedEmpty);
 // the old rows down a line instead of re-rasterising every Text on the panel.
 const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
   const row = new Container();
-  row.position.set(20, 84 + i * 54);
+  // Neobrutal: Paper's 26px inset, columns 24px apart, everything centred on its
+  // 52px row.
+  row.position.set(chips ? 31 : 20, ROW_Y + i * ROW_PITCH);
   row.visible = false;
   const icon = pixelSprite("star", 4);
   icon.position.set(24, 22);
   // Neobrutal's event name is a sticker instead, so it takes the icon's slot.
   icon.visible = !chips;
   const kindChip = new Graphics();
-  const kind = label("", 28, C.ink);
-  kind.position.set(chips ? 24 : 56, 8);
+  const kind = label("", chips ? 24 : 28, C.ink, face("display", 24, 0, { lineHeight: 30 }));
+  kind.position.set(chips ? 16 : 56, chips ? 11 : 8);
   // First names are short, so the name and time sit tight together and the
   // title gets everything to the right of the repo pill.
   // Columns sized for the 28px register: APPROVED (the widest kind) ends near
   // x196, so the name column starts at 240 with air to spare.
   const who = label("", 28, C.ink);
-  who.position.set(240, 8);
+  who.position.set(chips ? 212 : 240, 8);
   // Right-anchored: FK Grotesk's digits are proportional, so a left-anchored
   // HH:MM column wanders by up to 30px across twelve rows. Anchoring right puts
   // the ragged edge where the eye is not tracking a column.
   const time = label("", 28, C.dim);
   time.anchor.set(1, 0);
-  time.position.set(556, 8);
+  time.position.set(chips ? 529 : 556, 8);
   // Repo pill: a small rounded chip redrawn per render (width follows the text).
   const pillBg = new Graphics();
   const pillText = label(
     "",
     20,
     chips ? C.ink : C.dim,
-    T.type.pillTracking === undefined ? undefined : { letterSpacing: T.type.pillTracking },
+    face("ui", 20, 0, { lineHeight: 24 }) ??
+      (T.type.pillTracking === undefined ? undefined : { letterSpacing: T.type.pillTracking }),
   );
   const pill = new Container();
-  pill.position.set(580, 6);
+  pill.position.set(chips ? 578 : 580, chips ? 9 : 6);
   pill.addChild(pillBg, pillText);
   const title = label("", 28, C.feedTitle);
   title.position.set(0, 8); // x set per render, after the pill
@@ -678,10 +740,14 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
 // --------------------------------------------------------------------------------
 
 const wauHeader = T.decorations.headers?.wau;
-const wauPanel = panel(24, 712, 1872, 272, "WEEKLY WAU GROWTH", C.ink, wauHeader);
-const wauStatus = label("LOADING...", 24, C.dim);
+const wauPanel = panel(24, SHADOW ? 688 : 712, PANEL_W, 272, "WEEKLY WAU GROWTH", C.ink, wauHeader);
+const wauStatus = label("LOADING...", wauHeader ? 22 : 24, C.dim);
 wauStatus.anchor.set(1, 0);
 wauStatus.position.set(1852, 16);
+if (wauHeader) {
+  wauStatus.anchor.set(1, 0.5);
+  wauStatus.position.set(PANEL_W - 27, wauHeader.bar / 2);
+}
 wauPanel.addChild(wauStatus);
 
 /** `hot` (neobrutal only) fills the box with the theme's highlight. */
@@ -691,60 +757,69 @@ function wauCard(x, y, title, hot) {
   card.position.set(x, y);
   card.addChild(
     stats
-      ? slab(new Graphics(), 0, 0, 430, 72, 7, hot ? stats.hot : stats.fill, stats.outline, 0)
+      ? slab(new Graphics(), 0, 0, 430, 62, 8, hot ? stats.hot : stats.fill, stats.outline, 0)
       : new Graphics()
           .roundRect(0, 0, 430, 72, 7)
           .fill({ color: C.panelDeep, alpha: 0.72 })
           .stroke({ width: 2, color: C.panelEdge }),
   );
-  const caption = label(title, 18, C.dim);
+  // Neobrutal's caption reads in ink on the highlight.
+  const caption = label(title, 18, stats && hot ? C.ink : C.dim, face("ui", 18, 0.04));
   caption.position.set(14, 8);
-  const value = label("—", 36, C.ink);
+  const value = label("—", stats ? 34 : 36, C.ink);
   value.position.set(14, 29);
   if (stats) {
     // Neobrutal sets the caption and value on one line, the value flush right.
     caption.anchor.set(0, 0.5);
-    caption.position.set(18, 36);
+    caption.position.set(20, 31);
     value.anchor.set(1, 0.5);
-    value.position.set(412, 36);
+    value.position.set(410, 31);
   }
   card.addChild(caption, value);
   wauPanel.addChild(card);
   return value;
 }
 
+// Neobrutal's boxes sit inside Paper's 16/22 body padding, a 14px gutter apart.
+const [cardX, cardY] = T.decorations.stats ? [[27, 471], [77, 153]] : [[20, 464], [68, 150]];
 const wauValues = {
-  currentWau: wauCard(20, 68, "CURRENT WAU"),
-  targetWau: wauCard(464, 68, "WEEKLY TARGET"),
-  targetPercent: wauCard(20, 150, "TARGET REACHED", true),
-  activationPercent: wauCard(464, 150, "ACTIVATION RATE"),
+  currentWau: wauCard(cardX[0], cardY[0], "CURRENT WAU"),
+  targetWau: wauCard(cardX[1], cardY[0], "WEEKLY TARGET"),
+  targetPercent: wauCard(cardX[0], cardY[1], "TARGET REACHED", true),
+  activationPercent: wauCard(cardX[1], cardY[1], "ACTIVATION RATE"),
 };
 
-const wauChart = new Container();
-wauChart.position.set(930, 68);
-wauPanel.addChild(wauChart);
-const chartTitle = label("NEW WAU / DAY", 20, C.dim);
-wauChart.addChild(chartTitle);
 const chart = T.decorations.chart;
-const currentLegend = label(chart ? "THIS WEEK" : "● THIS WEEK", 18, chart ? C.ink : C.amber);
+const wauChart = new Container();
+wauChart.position.set(chart ? 935 : 930, chart ? 77 : 68);
+wauPanel.addChild(wauChart);
+const chartType = face("ui", 18, 0.04, { lineHeight: 22 });
+const chartTitle = label("NEW WAU / DAY", chart ? 18 : 20, C.dim, chartType);
+wauChart.addChild(chartTitle);
+const currentLegend = label(chart ? "THIS WEEK" : "● THIS WEEK", 18, chart ? C.ink : C.amber, chartType && { lineHeight: 22 });
 currentLegend.position.set(500, 2);
 wauChart.addChild(currentLegend);
-const previousLegend = label(chart ? "LAST WEEK" : "● LAST WEEK", 18, chart ? C.ink : C.info);
+const previousLegend = label(chart ? "LAST WEEK" : "● LAST WEEK", 18, chart ? C.ink : C.info, chartType && { lineHeight: 22 });
 previousLegend.position.set(338, 2);
 wauChart.addChild(previousLegend);
+if (chart) {
+  // Paper's order, flush with the chart's right edge: swatch, 8px, label, 22px gap.
+  currentLegend.position.set(902 - currentLegend.width, 0);
+  previousLegend.position.set(currentLegend.x - 46 - previousLegend.width, 0);
+}
 // Neobrutal's legend keys are outlined swatches: its canary text would vanish on white.
 if (chart)
   for (const [legend, color] of [[previousLegend, C.info], [currentLegend, C.amber]])
     wauChart.addChild(
       new Graphics()
-        .rect(legend.x - 22, legend.y + 5, 14, 14)
+        .rect(legend.x - 22.5, legend.y + 4.5, 13, 13)
         .fill(color)
         .stroke({ width: chart.outline, color: C.ink }),
     );
 const chartLines = new Graphics();
 wauChart.addChild(chartLines);
 const dayLabels = Array.from({ length: 7 }, (_, index) => {
-  const day = label(`D${index + 1}`, 16, C.dim);
+  const day = label(`D${index + 1}`, 16, chart ? C.ink : C.dim);
   day.anchor.set(0.5, 0);
   wauChart.addChild(day);
   return day;
@@ -752,9 +827,10 @@ const dayLabels = Array.from({ length: 7 }, (_, index) => {
 const barValues = [0, 1].map(() =>
   Array.from({ length: 7 }, () => {
     // A theme may override the value's tracking (see valueTracking in its file).
+    // Neobrutal's bars are 30px, so a tad smaller to keep a pair's values apart.
     const value = label(
       "",
-      14,
+      chart ? 13 : 14,
       C.dim,
       T.type.valueTracking === undefined ? undefined : { letterSpacing: T.type.valueTracking },
     );
@@ -769,7 +845,7 @@ const compact = (n) =>
     .toLowerCase();
 const wauUnavailable = label("WAU DATA UNAVAILABLE — RETRYING", 24, C.dim);
 wauUnavailable.anchor.set(0.5);
-wauUnavailable.position.set(1378, 154);
+wauUnavailable.position.set(PANEL_W - 494, 154);
 wauPanel.addChild(wauUnavailable);
 
 let latestWau = null;
@@ -796,20 +872,21 @@ function renderWau(data, stale = false) {
   wauStatus.text = stale ? `STALE // ${updated} // RETRYING` : `UPDATED ${updated}`;
   wauStatus.style.fill = stale ? C.red : (wauHeader?.ink ?? C.green);
 
-  const plot = { x: 8, y: 38, width: 900, height: 96 };
+  // Neobrutal: Paper's 900px plot, its baseline 112 down the chart.
+  const plot = chart ? { x: 0, y: 30, width: 900, height: 82 } : { x: 8, y: 38, width: 900, height: 96 };
   const max = Math.max(
     1,
     ...snapshot.daily.flatMap((point) => [point.current, point.previous]),
   );
   const groupWidth = plot.width / 7;
-  const barWidth = 38;
+  const barWidth = chart ? 30 : 38;
   const x = (index) => plot.x + groupWidth * (index + 0.5);
   const y = (value) => plot.y + plot.height - (value / max) * plot.height;
   chartLines
     .clear()
     .moveTo(plot.x, plot.y + plot.height)
     .lineTo(plot.x + plot.width, plot.y + plot.height)
-    .stroke({ width: chart?.outline ?? 2, color: C.panelEdge })
+    .stroke({ width: chart?.baseline ?? 2, color: C.panelEdge })
     .moveTo(plot.x, plot.y + plot.height / 2)
     .lineTo(plot.x + plot.width, plot.y + plot.height / 2)
     .stroke({ width: 1, color: C.panelEdge, alpha: 0.5 });
@@ -881,25 +958,29 @@ async function loadWau() {
 // AI News ticker: RSS headlines loop forever across a strip at the bottom.
 // --------------------------------------------------------------------------------
 
-const TICKER_Y = 992;
-const TICKER_H = 72;
-const TICKER_TEXT_Y = TICKER_Y + 20; // 32px type, centred in the strip
-const TICKER_GAP = 110;
+const TICKER_Y = SHADOW ? 980 : 992;
+const TICKER_H = SHADOW ? 76 : 72;
+// 32px type centred in the strip; Neobrutal's 34px sets a 42px line.
+const TICKER_TEXT_Y = TICKER_Y + (SHADOW ? 17 : 20);
+const TICKER_GAP = chips ? 36 : 110;
 const TICKER_STEP = 2; // px per 60Hz frame — 120 px/s, a lap of one 1920px screen every 16s
 
 // Framed like the marquee and the Feed panel: same side margins, same border.
 const tickerStrip = new Container();
 tickerStrip.addChild(
   T.decorations.tickerFill
-    ? slab(new Graphics(), 24, TICKER_Y, 1872, TICKER_H, 12, T.decorations.tickerFill, T.decorations.outline, T.decorations.hardShadow)
+    ? slab(new Graphics(), 24, TICKER_Y, PANEL_W, TICKER_H, 12, T.decorations.tickerFill, T.decorations.outline, SHADOW)
     : new Graphics()
-        .roundRect(24, TICKER_Y, 1872, TICKER_H, 10)
+        .roundRect(24, TICKER_Y, PANEL_W, TICKER_H, 10)
         .fill({ color: C.panel, alpha: 0.92 })
         .stroke({ width: 4, color: C.panelEdge }),
 );
 const tickerContent = new Container();
 // The scroll is clipped to the frame so segments don't poke into the margins.
-const tickerMask = new Graphics().roundRect(26, TICKER_Y, 1868, TICKER_H, 10).fill(C.white);
+// Neobrutal clips inside its 5px outline, as Paper does.
+const tickerMask = SHADOW
+  ? new Graphics().roundRect(29, TICKER_Y + 5, PANEL_W - 10, TICKER_H - 10, 7).fill(C.white)
+  : new Graphics().roundRect(26, TICKER_Y, PANEL_W - 4, TICKER_H, 10).fill(C.white);
 tickerStrip.addChild(tickerMask, tickerContent);
 tickerContent.mask = tickerMask;
 layers.board.addChild(tickerStrip);
@@ -914,11 +995,15 @@ function tickerSequence(headlines) {
     x += child.width + TICKER_GAP;
   };
   if (chips) {
-    // Neobrutal: the marker is a sticker, padded inside its slot.
-    const marker = label("AI NEWS", 32, stickerInk(chips.news));
-    marker.position.set(12, TICKER_TEXT_Y);
+    // Neobrutal: the marker is a flat, tilted sticker, padded inside its slot.
+    const marker = label("AI NEWS", 28, stickerInk(chips.news), face("display", 28, 0, { lineHeight: 34 }));
+    marker.position.set(16, TICKER_Y + TICKER_H / 2 - 17);
+    const chip = new Graphics();
+    const tilt = new Container();
+    tilt.addChild(chip, marker);
+    sticker(chip, marker, chips.news, { pad: [16, 4], outline: 0, shadow: 0, tilt: -3 });
     const slot = new Container();
-    slot.addChild(sticker(new Graphics(), marker, chips.news), marker);
+    slot.addChild(tilt);
     put(slot);
   } else {
     const marker = label("★ AI NEWS ★", 32, C.green);
@@ -932,10 +1017,16 @@ function tickerSequence(headlines) {
   }
   for (const headline of headlines) {
     const item = new Container();
-    const bullet = label("◆", 32, C.amber, chips ? { stroke: { color: C.ink, width: 4 } } : undefined);
-    bullet.position.y = TICKER_TEXT_Y;
-    const text = label(clip(headline, 100), 32, C.ink);
-    text.position.set(bullet.width + 24, TICKER_TEXT_Y);
+    // Neobrutal's bullet: an 18px outlined canary square on its corner.
+    const bullet = chips
+      ? new Graphics().rect(-7.5, -7.5, 15, 15).fill(C.amber).stroke({ width: 3, color: C.ink })
+      : label("◆", 32, C.amber);
+    if (chips) {
+      bullet.rotation = Math.PI / 4;
+      bullet.position.set(9, TICKER_Y + TICKER_H / 2);
+    } else bullet.position.y = TICKER_TEXT_Y;
+    const text = label(clip(headline, 100), chips ? 34 : 32, C.ink, face("ui", 34, 0, { lineHeight: 42 }));
+    text.position.set(chips ? 18 + TICKER_GAP : bullet.width + 24, TICKER_TEXT_Y);
     item.addChild(bullet, text);
     put(item);
   }
@@ -1005,7 +1096,7 @@ function renderFeed() {
       slot.key = keys[i];
       retextRow(slot, entry);
     }
-    slot.row.position.y = 84 + i * 54;
+    slot.row.position.y = ROW_Y + i * ROW_PITCH;
     // Older entries fade toward the bottom of the panel, so the eye lands on the top.
     slot.row.alpha = 1 - i * 0.045;
     slot.row.visible = true;
@@ -1029,14 +1120,17 @@ function retextRow({ icon, kindChip, kind, who, time, pillBg, pillText, pill, ti
   who.text = clip(entry.actor ?? "", T.type.nameMax);
   time.text = clock(entry.at);
   pillText.text = clip(entry.repo.split("/").pop(), 16);
-  pillText.position.set(11, 6);
-  const pillWidth = Math.ceil(pillText.width) + 22;
+  // Neobrutal: Paper's 14/2 padding inside a 3px outline.
+  const pad = chips ? [17, 5] : [11, 6];
+  pillText.position.set(...pad);
+  const pillWidth = Math.ceil(pillText.width) + pad[0] * 2;
+  const pillHeight = pillText.height + pad[1] * 2;
   if (chips)
     pillBg
       .clear()
-      .roundRect(0, 0, pillWidth, 34, 17)
+      .roundRect(0, 0, pillWidth, pillHeight, pillHeight / 2)
       .fill(chips.pill)
-      .stroke({ color: C.ink, width: 3 });
+      .stroke({ color: C.ink, width: 3, alignment: 1 });
   else
     pillBg
       .clear()
@@ -1044,8 +1138,8 @@ function retextRow({ icon, kindChip, kind, who, time, pillBg, pillText, pill, ti
       .fill({ color: C.white, alpha: 0.06 })
       .stroke({ color: C.dim, alpha: 0.7, width: 1.5 });
   // Title starts just past the pill and runs to the panel edge.
-  title.position.x = pill.position.x + pillWidth + 14;
-  fitText(title, `#${entry.number}  ${entry.title}`, 1828 - title.position.x);
+  title.position.x = pill.position.x + pillWidth + (chips ? 24 : 14);
+  fitText(title, `#${entry.number}  ${entry.title}`, PANEL_W - (chips ? 62 : 44) - title.position.x);
 }
 
 // An idle board still has to age entries out; a minute of granularity is plenty.
@@ -1147,7 +1241,7 @@ function drawMvpName() {
   // Right-align the pair: the tally hangs off the end of the name (clear of its
   // sticker's padding when it has one).
   mvpName.position.x =
-    1824 - (mvpNames.length ? Math.ceil(mvpTally.width) + (chips ? 40 : 14) : 0);
+    MVP_X - (mvpNames.length ? Math.ceil(mvpTally.width) + (chips ? 44 : 14) : 0);
 }
 // A tie shares the crown, so the marquee cycles the contenders. Rotation is not a
 // lead change: no flash, only a new set of contenders earns one — and the timer
@@ -1167,7 +1261,8 @@ function setMvp(mvp) {
     }, 3000);
   }
   mvpTally.text = mvp ? `×${mvp.count}` : "";
-  if (chips) sticker(mvpTallyChip, mvpTally, chips.tally);
+  if (chips)
+    sticker(mvpTallyChip, mvpTally, chips.tally, { radius: 10, outline: 3, shadow: 0, edge: C.white, tilt: -4 });
   mvpFill = mvp ? C.amber : C.marqueeDim;
   drawMvpName();
   if (changed) flashLeft = FLASH_MS;
@@ -1258,9 +1353,10 @@ function showCelebrationClip(maxMs, onFail) {
   if (!list.length) return null;
   const pick = list[Math.floor(Math.random() * list.length)];
   const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
-  // Design-space box in the trophy slot, above the banner.
+  // Design-space box in the trophy slot, above the banner (shorter and lifted
+  // with the trophy over Neobrutal's taller card).
   const bw = 640;
-  const bh = 340;
+  const bh = ON_CARD ? 280 : 340;
   const box = document.createElement("div");
   box.style.position = "absolute";
   box.style.zIndex = "10";
@@ -1274,7 +1370,7 @@ function showCelebrationClip(maxMs, onFail) {
     box.style.width = `${Math.round(bw * scale)}px`;
     box.style.height = `${Math.round(bh * scale)}px`;
     box.style.left = `${Math.round(left + (W / 2 - bw / 2) * scale)}px`;
-    box.style.top = `${Math.round(top + (230 - bh / 2) * scale)}px`;
+    box.style.top = `${Math.round(top + (230 - LIFT - bh / 2) * scale)}px`;
   };
   place();
   const img = document.createElement("img");
@@ -1394,12 +1490,16 @@ function playNextCelebration() {
 // Neobrutal sets takeovers and chimes on a card. The card's ground is the theme's
 // flat canary, so its dim goes all the way.
 const ON_CARD = Boolean(T.decorations.card);
+// The card stands taller than the old band, so the trophy and stamp ride higher to
+// clear its top edge.
+const LIFT = ON_CARD ? 80 : 0;
 
 /**
  * Shared takeover backdrop: dim the board, name the PR, headline in the middle,
  * and credit whoever earned it (`verb` reads "merged by" / "approved by").
  * Neobrutal (T.decorations.card) sets the copy in ink on a tilted white card, the
- * credit on a sticker; `fit` re-sizes both after the copy is rewritten.
+ * credit on a sticker above the headline; `fit` re-lays the card after the copy is
+ * rewritten, so callers animate from the headline's `y` as `fit` left it.
  */
 function takeoverScene(headline, color, event, verb) {
   const scene = new Container();
@@ -1421,10 +1521,10 @@ function takeoverScene(headline, color, event, verb) {
 
   const banner = label(
     headline,
-    132,
+    ON_CARD ? 150 : 132,
     ON_CARD ? C.ink : color,
     ON_CARD
-      ? undefined
+      ? face("display", 150, -0.02)
       : { dropShadow: { color: C.bg, distance: 6, blur: 0, angle: Math.PI / 4, alpha: 1 } },
   );
   banner.anchor.set(0.5);
@@ -1435,18 +1535,21 @@ function takeoverScene(headline, color, event, verb) {
     event.repo
       ? `${event.repo.split("/").pop()} #${event.number}  ${clip(event.title ?? "", 46)}`
       : "",
-    36,
+    ON_CARD ? 40 : 36,
     C.ink,
+    face("ui", 40, 0, { lineHeight: 48 }),
   );
   caption.anchor.set(0.5);
   caption.position.set(W / 2, H / 2 + 60);
   copy.addChild(caption);
 
   // No login means GitHub named nobody; a bare "merged by" credits no one, so skip it.
+  const by = event.actor ? `${verb} ${clip(event.actor, 39)}` : "";
   const credit = label(
-    event.actor ? `${verb} ${clip(event.actor, 39)}` : "",
-    44,
+    ON_CARD ? by.toUpperCase() : by,
+    ON_CARD ? 30 : 44,
     ON_CARD ? stickerInk(T.decorations.chips.credit) : color,
+    face("display", 30, 0, { lineHeight: 36 }),
   );
   credit.anchor.set(0.5);
   credit.position.set(W / 2, H / 2 + 130);
@@ -1457,10 +1560,25 @@ function takeoverScene(headline, color, event, verb) {
   copy.addChild(creditRow);
   const fit = () => {
     if (!ON_CARD) return;
-    // Wide enough for the headline's bounce (6%) with air; from its top to the credit.
-    const width = Math.max(banner.width * 1.06, caption.width, credit.width) + 200;
-    card(cardBg, Math.min(width, W - 80), 400, H / 2 + 25);
-    sticker(creditChip, credit, T.decorations.chips.credit);
+    // Paper's card: credit sticker (4/22 padding in a 5px outline), headline and
+    // caption, stacked 26px apart inside 60/56 padding and an 8px outline, centred.
+    // An empty row takes no room. At least 1240 wide, or the headline's bounce (6%)
+    // with Paper's 60px sides.
+    const rows = [
+      [credit, credit.text ? credit.height + 18 : 0],
+      [banner, banner.height],
+      [caption, caption.text ? caption.height : 0],
+    ].filter(([, height]) => height);
+    const content = rows.reduce((sum, [, height]) => sum + height + 26, -26);
+    const width = Math.max(banner.width * 1.06, caption.width, credit.width + 54) + 136;
+    card(cardBg, Math.min(Math.max(1240, width), W - 80), content + 132, H / 2);
+    // The card stands content + 132 tall (padding and outlines); rows start 68 in.
+    let y = H / 2 - content / 2 + 2;
+    for (const [row, height] of rows) {
+      row.y = y + height / 2;
+      y += height + 26;
+    }
+    sticker(creditChip, credit, T.decorations.chips.credit, { pad: [22, 4], radius: 12, outline: 5, shadow: 6, tilt: 3 });
   };
   fit();
   return { scene, dim, banner, caption, credit, creditRow, fit };
@@ -1493,11 +1611,12 @@ function mergedTakeover(event, done) {
     event,
     "merged by",
   );
+  const bannerY = banner.y;
 
   // A dropped-in clip takes the trophy slot; no clips (or a clip whose file has
   // since been rotated away), the trophy keeps its job.
   const trophy = pixelSprite("trophy16", 7);
-  trophy.position.set(W / 2, H / 2 - 240);
+  trophy.position.set(W / 2, H / 2 - 240 - LIFT);
   const clip = showCelebrationClip(15_000, () => {
     if (!trophy.destroyed) trophy.visible = true;
   });
@@ -1539,11 +1658,11 @@ function mergedTakeover(event, done) {
     (progress, elapsed, delta) => {
       dim.alpha = Math.min(progress * 4, ON_CARD ? 1 : 0.85) * (progress > 0.85 ? (1 - progress) / 0.15 : 1);
       banner.scale.set(Math.min(elapsed / 220, 1) * (1 + Math.sin(elapsed / 160) * 0.06));
-      banner.y = H / 2 - 60 + Math.sin(elapsed / 200) * 18;
+      banner.y = bannerY + Math.sin(elapsed / 200) * 18;
       caption.alpha = Math.min(elapsed / 400, 1);
       creditRow.alpha = Math.min(elapsed / 400, 1);
       trophy.rotation = Math.sin(elapsed / 260) * 0.25;
-      trophy.y = H / 2 - 240 + Math.sin(elapsed / 180) * 14;
+      trophy.y = H / 2 - 240 - LIFT + Math.sin(elapsed / 180) * 14;
       stepParticles(confetti, delta, 0.12);
       stepParticles(fireworks, delta, 0.1);
       for (const spark of fireworks) spark.alpha = 1 - progress;
@@ -1575,9 +1694,10 @@ function wauTakeover(event, done) {
   if ([event.current, event.previous].every(Number.isFinite))
     credit.text = `${whole(event.current)} NEW WAU TODAY  /  ${whole(event.previous)} LAST ${day.slice(0, 3) || "WEEK"}`;
   fit();
+  const bannerY = banner.y;
 
   const trophy = pixelSprite("trophy16", 7);
-  trophy.position.set(W / 2, H / 2 - 240);
+  trophy.position.set(W / 2, H / 2 - 240 - LIFT);
   const clip = showCelebrationClip(15_000, () => {
     if (!trophy.destroyed) trophy.visible = true;
   });
@@ -1630,11 +1750,11 @@ function wauTakeover(event, done) {
     (progress, elapsed, delta) => {
       dim.alpha = Math.min(progress * 12, ON_CARD ? 1 : 0.85) * (progress > 0.9 ? (1 - progress) / 0.1 : 1);
       banner.scale.set(Math.min(elapsed / 220, 1) * (1 + Math.sin(elapsed / 160) * 0.06));
-      banner.y = H / 2 - 60 + Math.sin(elapsed / 200) * 18;
+      banner.y = bannerY + Math.sin(elapsed / 200) * 18;
       caption.alpha = Math.min(elapsed / 400, 1);
       creditRow.alpha = Math.min(elapsed / 400, 1);
       trophy.rotation = Math.sin(elapsed / 260) * 0.25;
-      trophy.y = H / 2 - 240 + Math.sin(elapsed / 180) * 14;
+      trophy.y = H / 2 - 240 - LIFT + Math.sin(elapsed / 180) * 14;
       stepParticles(confetti, delta, 0.12);
       // Recycle what falls off the bottom so the rain lasts; stop as the dim
       // lifts, so the last of it drains away instead of vanishing mid-air.
@@ -1669,8 +1789,9 @@ function scheduledTakeover(event, done) {
   const scale = fitWrapped(banner, 1640, 300);
   banner.scale.set(scale);
   fit();
-  // The card's middle (see takeoverScene's fit): nothing sits under the headline.
-  const y = H / 2 + 25;
+  // Nothing sits around the headline: the card's middle (see takeoverScene's fit),
+  // or the band's.
+  const y = ON_CARD ? banner.y : H / 2 + 25;
   banner.y = y;
 
   // Behind the copy, just above the dim: a merge's two words survive confetti on
@@ -1728,16 +1849,17 @@ function approvedTakeover(event, done) {
     event,
     "approved by",
   );
-  banner.y = H / 2 - 40;
+  // The card's headline stays where takeoverScene's fit laid it.
+  if (!ON_CARD) banner.y = H / 2 - 40;
 
   const ring = new Sprite(ringTexture());
   ring.anchor.set(0.5);
   ring.tint = C.green;
-  ring.position.set(W / 2, H / 2 - 40);
+  ring.position.set(W / 2, banner.y);
   scene.addChildAt(ring, 1);
 
   const stamp = pixelSprite("check16", 10, C.green);
-  stamp.position.set(W / 2, H / 2 - 250);
+  stamp.position.set(W / 2, H / 2 - 250 - LIFT);
   scene.addChild(stamp);
 
   const sparks = particles(scene, 48, () => {
@@ -1745,7 +1867,7 @@ function approvedTakeover(event, done) {
     spark.anchor.set(0.5);
     spark.scale.set(2.5);
     spark.tint = C.green;
-    spark.position.set(W / 2, H / 2 - 40);
+    spark.position.set(W / 2, banner.y);
     const angle = Math.random() * Math.PI * 2;
     const speed = 3 + Math.random() * 6;
     spark.vx = Math.cos(angle) * speed;
@@ -1845,7 +1967,7 @@ function prClosedAnimation() {
 function changesRequestedAnimation() {
   const scene = new Container();
   const flash = new Graphics()
-    .roundRect(24, 204, 1872, 756, 10)
+    .roundRect(24, 204, PANEL_W, 756, 10)
     .stroke({ width: 6, color: C.red });
   scene.addChild(flash);
   const bang = pixelSprite("bang", 12);
