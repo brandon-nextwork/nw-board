@@ -789,9 +789,36 @@ const wauValues = {
   activationPercent: wauCard(cardX[1], cardY[1], "ACTIVATION RATE"),
 };
 
+// On Target: a status light between the cards and the chart, boxed like a card.
+const onTargetTile = new Container();
+const onTargetLight = new Graphics();
+const onTargetCaption = label("ON TARGET", 18, C.dim, face("ui", 18, 0.04));
+// The only centred caption on the panel: it heads the light below it.
+onTargetCaption.anchor.set(0.5, 0);
+onTargetCaption.position.set(112, 8);
+if (T.decorations.stats) {
+  onTargetTile.position.set(935, 77);
+  onTargetTile.addChild(slab(new Graphics(), 0, 0, 224, 138, 8, T.decorations.stats.fill, T.decorations.stats.outline, 0));
+  onTargetCaption.anchor.set(0.5);
+  onTargetCaption.position.set(112, 27);
+} else {
+  onTargetTile.position.set(914, 68);
+  onTargetTile.addChild(
+    new Graphics()
+      .roundRect(0, 0, 224, 154, 7)
+      .fill({ color: C.panelDeep, alpha: 0.72 })
+      .stroke({ width: 2, color: C.panelEdge }),
+  );
+}
+onTargetTile.addChild(onTargetCaption, onTargetLight);
+wauPanel.addChild(onTargetTile);
+const ON_TARGET = { on: C.green, behind: C.amber, "far-behind": C.red };
+
 const chart = T.decorations.chart;
 const wauChart = new Container();
-wauChart.position.set(chart ? 935 : 930, chart ? 77 : 68);
+wauChart.position.set(chart ? 1187 : 1158, chart ? 77 : 68);
+// Neobrutal: Paper's 650px plot, its baseline 112 down the chart.
+const plot = chart ? { x: 0, y: 30, width: 650, height: 82 } : { x: 8, y: 38, width: 672, height: 96 };
 wauPanel.addChild(wauChart);
 const chartType = face("ui", 18, 0.04, { lineHeight: 22 });
 const chartTitle = label("NEW WAU / DAY", chart ? 18 : 20, C.dim, chartType);
@@ -804,7 +831,7 @@ previousLegend.position.set(338, 2);
 wauChart.addChild(previousLegend);
 if (chart) {
   // Paper's order, flush with the chart's right edge: swatch, 8px, label, 22px gap.
-  currentLegend.position.set(902 - currentLegend.width, 0);
+  currentLegend.position.set(plot.width + 2 - currentLegend.width, 0);
   previousLegend.position.set(currentLegend.x - 46 - previousLegend.width, 0);
 }
 // Neobrutal's legend keys are outlined swatches: its canary text would vanish on white.
@@ -845,7 +872,7 @@ const compact = (n) =>
     .toLowerCase();
 const wauUnavailable = label("WAU DATA UNAVAILABLE — RETRYING", 24, C.dim);
 wauUnavailable.anchor.set(0.5);
-wauUnavailable.position.set(PANEL_W - 494, 154);
+wauUnavailable.position.set(wauChart.x + plot.x + plot.width / 2, 154);
 wauPanel.addChild(wauUnavailable);
 
 let latestWau = null;
@@ -854,6 +881,7 @@ function renderWau(data, stale = false) {
   const snapshot = data;
   wauUnavailable.visible = !snapshot;
   wauChart.visible = Boolean(snapshot);
+  onTargetTile.visible = Boolean(snapshot);
   for (const value of Object.values(wauValues)) value.text = "—";
   if (!snapshot) {
     wauStatus.text = "UNAVAILABLE // RETRYING";
@@ -871,9 +899,13 @@ function renderWau(data, stale = false) {
     .toUpperCase();
   wauStatus.text = stale ? `STALE // ${updated} // RETRYING` : `UPDATED ${updated}`;
   wauStatus.style.fill = stale ? C.red : (wauHeader?.ink ?? C.green);
+  // Old cached payloads carry no onTarget: an empty tile, not a guess.
+  const light = ON_TARGET[snapshot.onTarget];
+  onTargetLight.clear();
+  if (light && T.decorations.stats)
+    onTargetLight.circle(112, 80, 32).fill(light).stroke({ width: T.decorations.stats.outline, color: C.ink, alignment: 1 });
+  else if (light) onTargetLight.circle(112, 94, 36).fill(light);
 
-  // Neobrutal: Paper's 900px plot, its baseline 112 down the chart.
-  const plot = chart ? { x: 0, y: 30, width: 900, height: 82 } : { x: 8, y: 38, width: 900, height: 96 };
   const max = Math.max(
     1,
     ...snapshot.daily.flatMap((point) => [point.current, point.previous]),
@@ -2310,6 +2342,7 @@ const sampleWau = {
   targetPercent: 33.7,
   activationPercent: 4.5,
   today: 2, // Monday, still short of last Monday: ticks for Sat and Sun, a cross for Mon
+  onTarget: "behind",
   daily: [2869, 1679, 1503, 0, 0, 0, 0].map((current, index) => ({
     day: index + 1,
     label: ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][index],

@@ -38,10 +38,15 @@ const tile = (id: number, result: unknown[]) => ({ id, insight: { result } });
 // daily-target column the board does not use.
 const DAYS = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 /** `rows` overrides a day's [current, previous] by index (Sat=0 … Fri=6). */
-const dashboard = (targetPercent = "33.7%", rows: Record<number, number[]> = {}) => ({
+const dashboard = (
+  targetPercent = "33.7%",
+  rows: Record<number, number[]> = {},
+  currentWau = 5906,
+  targetWau = 17518,
+) => ({
   results: [
-    tile(7119738, [[5906]]),
-    tile(7119740, [[17518]]),
+    tile(7119738, [[currentWau]]),
+    tile(7119740, [[targetWau]]),
     tile(7122309, [[targetPercent]]),
     tile(10992630, [["4.5%"]]),
     tile(
@@ -97,8 +102,29 @@ test("the WAU route answers from PostHog's cache and refreshes it in the backgro
       previous: 900 + day,
     })),
     today: 5,
+    onTarget: "far-behind",
   });
   expect(JSON.stringify(body)).not.toContain("test-posthog-token");
+});
+
+// Thursday noon is 5.5 days into the Sat–Fri cycle: a 7000 target expects 5500 by now.
+test.each([
+  [5500, 7000, "on"],
+  [5225, 7000, "behind"],
+  [4950, 7000, "behind"],
+  [4949, 7000, "far-behind"],
+  [4400, 7000, "far-behind"],
+  [0, 0, "on"],
+])("%i WAU against a %i target at Thursday noon is %s", async (current, target, expected) => {
+  const base = await upstream((req, res) => {
+    if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(dashboard(undefined, {}, current, target)));
+  });
+  running = await startServer(0, { configPath, posthogApiBase: base, now: () => thursdayAt(12) });
+
+  const body = await (await fetch(`http://127.0.0.1:${running.port}/wau.json`)).json();
+  expect(body.onTarget).toBe(expected);
 });
 
 test("a slow PostHog recompute does not hold up the WAU route", async () => {
