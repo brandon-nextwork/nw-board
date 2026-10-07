@@ -67,6 +67,17 @@ else
   echo "    no timesyncd or chrony running — the server will start on whatever the clock says" >&2
 fi
 
+echo "==> Keeping the journal across reboots"
+# Pi OS keeps it in RAM (its own Storage=volatile drop-in), so the power-cycle that
+# unsticks a hung board also wipes the only record of why. /etc beats /usr/lib, so
+# this overrides it; capped to spare the SD card. Read the last boot: journalctl -b -1
+JOURNAL_CONF=/etc/systemd/journald.conf.d/10-pr-arcade.conf
+if [ ! -f "$JOURNAL_CONF" ]; then
+  sudo install -d -m 755 "$(dirname "$JOURNAL_CONF")"
+  printf '[Journal]\nStorage=persistent\nSystemMaxUse=100M\n' | sudo tee "$JOURNAL_CONF" >/dev/null
+  sudo systemctl restart systemd-journald
+fi
+
 echo "==> Installing kiosk unit"
 install -D -m 644 "$REPO_DIR/deploy/pr-arcade-kiosk.service" \
   "$USER_UNIT_DIR/pr-arcade-kiosk.service"

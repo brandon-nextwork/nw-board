@@ -979,7 +979,9 @@ async function loadWau() {
       next.daily.length !== 7
     )
       throw new Error("invalid WAU dashboard data");
-    renderWau(next);
+    // The server answers 200 with its last good numbers when PostHog fails, so a Pi
+    // that lost its network overnight would otherwise show yesterday's WAU as UPDATED.
+    renderWau(next, Date.now() - Date.parse(next.fetchedAt) > 2 * WAU_REFRESH_MS);
   } catch (error) {
     console.warn(error);
     renderWau(latestWau, true);
