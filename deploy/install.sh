@@ -78,6 +78,18 @@ if [ ! -f "$JOURNAL_CONF" ]; then
   sudo systemctl restart systemd-journald
 fi
 
+echo "==> Turning off Wi-Fi power save"
+# The office Pi is on Wi-Fi only, and with brcmfmac power save on it drops off the
+# network overnight: WAU goes stale and ssh to pr-arcade.local fails until a reboot.
+# wifi.powersave=2 is NetworkManager's "disable"; iw applies it now without a reconnect.
+if systemctl is-active --quiet NetworkManager; then
+  printf '[connection]\nwifi.powersave = 2\n' |
+    sudo tee /etc/NetworkManager/conf.d/10-pr-arcade-wifi-powersave.conf >/dev/null
+fi
+if command -v iw >/dev/null 2>&1 && iw dev wlan0 info >/dev/null 2>&1; then
+  sudo iw dev wlan0 set power_save off || echo "    could not turn off power save on wlan0" >&2
+fi
+
 echo "==> Installing kiosk unit"
 install -D -m 644 "$REPO_DIR/deploy/pr-arcade-kiosk.service" \
   "$USER_UNIT_DIR/pr-arcade-kiosk.service"
