@@ -1,4 +1,4 @@
-// The Arcade Theme: the board's pre-reskin synthwave look, worn from a WAU
+// The Arcade Theme: the board's pre-reskin synthwave look, worn from a WUU
 // Target Hit until local midnight. Same palette keys as the kernel theme, so
 // every display object built from `C` picks these up unchanged. This is the one
 // place outside kernel-tokens.gen.js that may hold raw colors — they are the old

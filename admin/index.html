@@ -251,7 +251,7 @@
   <section class="replay" aria-labelledby="h-replay">
     <div class="rail"><span class="num">05</span><h2 id="h-replay">On the TV</h2></div>
     <div class="content" style="flex-direction:row; align-items:center; gap:16px">
-      <button class="replay-btn" id="replay">▶&nbsp; Replay WAU Target Hit</button>
+      <button class="replay-btn" id="replay">▶&nbsp; Replay WUU Target Hit</button>
       <div><strong style="font-weight:500">Plays on the TV now</strong><p>Full takeover with applause. Everyone in the room will hear it.</p></div>
     </div>
   </section>
@@ -265,7 +265,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 const SLOTS = {
   "pr-merged": "PR merged", "review-approved": "Review approved", "pr-opened": "PR opened",
-  "day-start": "Day start chime", "day-chime": "Day end chime", "wau-target-hit": "WAU target hit",
+  "day-start": "Day start chime", "day-chime": "Day end chime", "wau-target-hit": "WUU target hit",
 };
 // What an unassigned slot plays: mirrors SAMPLES in public/audio.js.
 const BUILT_IN = {
@@ -275,7 +275,7 @@ const BUILT_IN = {
 // Swatches for the Theme cards; a theme not listed here still shows, just without one.
 const LOOKS = {
   kernel: { about: "Warm leather, brand kernel", colors: ["#1B1918", "#FFDD2D", "#11CCA6", "#E8624D"] },
-  arcade: { about: "Neon CRT · auto after WAU hit", colors: ["#0B0B1A", "#FFE066", "#66DDAA", "#FF7CE5"] },
+  arcade: { about: "Neon CRT · auto after WUU hit", colors: ["#0B0B1A", "#FFE066", "#66DDAA", "#FF7CE5"] },
   neobrutal: { about: "Canary slab, hard shadows", colors: ["#FFDD2D", "#FFFFFF", "#1B1918", "#875BF7"], boxed: true },
 };
 // M..S on screen, JS getDay() values underneath (0 = Sunday).

@@ -80,7 +80,7 @@ fi
 
 echo "==> Turning off Wi-Fi power save"
 # The office Pi is on Wi-Fi only, and with brcmfmac power save on it drops off the
-# network overnight: WAU goes stale and ssh to pr-arcade.local fails until a reboot.
+# network overnight: WUU goes stale and ssh to pr-arcade.local fails until a reboot.
 # wifi.powersave=2 is NetworkManager's "disable"; iw applies it now without a reconnect.
 if systemctl is-active --quiet NetworkManager; then
   printf '[connection]\nwifi.powersave = 2\n' |

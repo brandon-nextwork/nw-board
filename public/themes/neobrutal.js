@@ -87,7 +87,7 @@ export default {
       credit: KERNEL["accent-emerald"],
       news: INK,
     },
-    // WAU stat boxes: white, TARGET REACHED canary.
+    // WUU stat boxes: white, TARGET REACHED canary.
     stats: { fill: KERNEL["white"], hot: KERNEL["accent-canary"], outline: 4 },
     // Outlined bars and swatches; canary values would vanish on white, so muted.
     chart: { outline: 3, baseline: 4, valueInk: KERNEL["brand-600"] },

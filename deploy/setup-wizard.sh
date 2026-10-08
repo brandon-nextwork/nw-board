@@ -489,7 +489,7 @@ say ""
 if [[ -n "$(_existing POSTHOG_PERSONAL_API_KEY || true)" ]]; then
   ok "a POSTHOG_PERSONAL_API_KEY is already configured — just press Enter to keep it"
 else
-  say "Now a PostHog personal API key for the Weekly WAU Growth Tracker:"
+  say "Now a PostHog personal API key for the Weekly Unique User Growth Tracker:"
   open_url "https://us.posthog.com/settings/user-api-keys"
   step "Create a personal API key with dashboard:read and query:read access"
   step "Make sure it can read project 196853, then copy it"
@@ -505,7 +505,7 @@ fi
 if [[ -n "${POSTHOG_PERSONAL_API_KEY:-}" ]]; then
   write_env POSTHOG_PERSONAL_API_KEY "$POSTHOG_PERSONAL_API_KEY"
 else
-  SKIPPED+=("POSTHOG_PERSONAL_API_KEY in $ENV_TARGET — the WAU panel will keep retrying")
+  SKIPPED+=("POSTHOG_PERSONAL_API_KEY in $ENV_TARGET — the WUU panel will keep retrying")
 fi
 install_env_file
 verify "$ENV_TARGET is 0600" \

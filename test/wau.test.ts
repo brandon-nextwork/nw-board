@@ -64,7 +64,7 @@ const dashboard = (
   ],
 });
 
-test("the WAU route answers from PostHog's cache and refreshes it in the background", async () => {
+test("the WUU route answers from PostHog's cache and refreshes it in the background", async () => {
   const requests: { url?: string; authorization?: string; accept?: string }[] = [];
   const base = await upstream((req, res) => {
     requests.push({
@@ -111,7 +111,7 @@ test("the WAU route answers from PostHog's cache and refreshes it in the backgro
       target: 2503,
     })),
     today: 5,
-    // Thursday 10:00: 1005 new WAU against 2503 × 10/24 ≈ 1043.
+    // Thursday 10:00: 1005 new WUU against 2503 × 10/24 ≈ 1043.
     onTarget: "behind",
   });
   expect(JSON.stringify(body)).not.toContain("test-posthog-token");
@@ -136,7 +136,7 @@ test.each([
   [899, 2000, "far-behind"],
   [500, 2000, "far-behind"],
   [0, 0, "on"],
-])("%i new WAU against a %i daily target at Thursday noon is %s", async (current, target, expected) => {
+])("%i new WUU against a %i daily target at Thursday noon is %s", async (current, target, expected) => {
   expect(
     await onTargetAtThursdayNoon(dashboard(undefined, { 5: [current, 0] }, undefined, undefined, target)),
   ).toBe(expected);
@@ -149,7 +149,7 @@ test("without a daily-target column the light paces today against the weekly tar
   ).toBe("behind");
 });
 
-test("a slow PostHog recompute does not hold up the WAU route", async () => {
+test("a slow PostHog recompute does not hold up the WUU route", async () => {
   const base = await upstream((req, res) => {
     // The background refresh never answers; the cached read does.
     if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
@@ -187,7 +187,7 @@ test.each([
     (res: import("node:http").ServerResponse) =>
       res.end(JSON.stringify({ results: dashboard().results.slice(0, 1) })),
   ],
-])("the WAU route keeps the last good numbers through %s", async (_name, fail) => {
+])("the WUU route keeps the last good numbers through %s", async (_name, fail) => {
   let broken = false;
   const base = await upstream((req, res) => {
     if (new URL(req.url!, "http://x").searchParams.get("refresh") === "blocking") return;
@@ -205,14 +205,14 @@ test.each([
   expect(await after.json()).toEqual(good);
 });
 
-test("the WAU route is unavailable without a PostHog credential", async () => {
+test("the WUU route is unavailable without a PostHog credential", async () => {
   delete process.env.POSTHOG_PERSONAL_API_KEY;
   running = await startServer(0, { configPath });
 
   expect((await fetch(`http://127.0.0.1:${running.port}/wau.json`)).status).toBe(503);
 });
 
-test("the WAU route maps an upstream error to 502", async () => {
+test("the WUU route maps an upstream error to 502", async () => {
   const base = await upstream((_req, res) => {
     res.writeHead(503);
     res.end("no");
@@ -222,7 +222,7 @@ test("the WAU route maps an upstream error to 502", async () => {
   expect((await fetch(`http://127.0.0.1:${running.port}/wau.json`)).status).toBe(502);
 });
 
-test("the WAU route times out a stalled upstream", async () => {
+test("the WUU route times out a stalled upstream", async () => {
   const base = await upstream(async (_req, res) => {
     await sleep(100);
     res.end(JSON.stringify(dashboard()));
@@ -236,7 +236,7 @@ test("the WAU route times out a stalled upstream", async () => {
   expect((await fetch(`http://127.0.0.1:${running.port}/wau.json`)).status).toBe(502);
 });
 
-test("the WAU route rejects an oversized upstream response", async () => {
+test("the WUU route rejects an oversized upstream response", async () => {
   const base = await upstream((_req, res) => res.end("x".repeat(1024 * 1024 + 1)));
   running = await startServer(0, { configPath, posthogApiBase: base });
 
@@ -262,7 +262,7 @@ test.each([
       ),
     },
   ],
-])("the WAU route rejects %s PostHog data", async (_name, body) => {
+])("the WUU route rejects %s PostHog data", async (_name, body) => {
   const base = await upstream((_req, res) => {
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(body));
@@ -294,7 +294,7 @@ async function targetHits(reads: ReturnType<typeof dashboard>[], now = () => thu
   return messages.filter((message) => message.type === "wau-target-hit");
 }
 
-test("today's new WAU beating the same weekday last week is broadcast as a Target Hit", async () => {
+test("today's new WUU beating the same weekday last week is broadcast as a Target Hit", async () => {
   expect(await targetHits([thursday(900, 1000), thursday(1001, 1000)])).toEqual([
     { type: "wau-target-hit", audible: true, label: "Thursday", current: 1001, previous: 1000 },
   ]);
