@@ -76,6 +76,8 @@ if [ ! -f "$JOURNAL_CONF" ]; then
   sudo install -d -m 755 "$(dirname "$JOURNAL_CONF")"
   printf '[Journal]\nStorage=persistent\nSystemMaxUse=100M\n' | sudo tee "$JOURNAL_CONF" >/dev/null
   sudo systemctl restart systemd-journald
+  # A restart alone keeps writing to RAM until the next boot's flush; move now.
+  sudo journalctl --flush
 fi
 
 echo "==> Turning off Wi-Fi power save"
