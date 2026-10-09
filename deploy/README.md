@@ -31,7 +31,7 @@ Pulls, runs `npm ci` only if `package.json`/`package-lock.json` changed, re-runs
 
 ## Notes
 
-- **Secrets** live only in `/etc/pr-arcade.env`, mode 0600, owned by the display user. Never in the repo. Contains `PORT`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TOKEN`, and the `dashboard:read` + `query:read` `POSTHOG_PERSONAL_API_KEY` used by the WAU panel.
+- **Secrets** live only in `/etc/pr-arcade.env`, mode 0600, owned by the display user. Never in the repo. Contains `PORT`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TOKEN`, and the `dashboard:read` + `query:read` `POSTHOG_PERSONAL_API_KEY` used by the WUU panel.
 - **Funnel exposes the whole static tree**, not just the webhook: that now includes the vendored commercial woff2 fonts and any celebration clips. Scope it with `tailscale funnel --set-path=/webhook 3000` so only the webhook is public.
 - **Display flags**, appended to the kiosk URL in `kiosk.sh`: `?fps` shows the frame rate and which renderer WebGL actually gave us, `?demo` runs the full animation tour once.
 - **Tracked Repos** live in `config.json` at the repo root, alongside the roster and the chime times. It is gitignored — it names your repos and your team — so it lives only on this Pi; edit it here and restart. `cp config.example.json config.json` to start one. The server won't start without it.
@@ -72,7 +72,7 @@ journalctl -u pr-arcade -f               # server logs
 systemctl --user status pr-arcade-kiosk  # kiosk (run on the Pi's own session)
 tailscale funnel status                  # is the public URL live
 tailscale serve status                   # 8443 (Admin Console) says "tailnet only"
-curl -X POST http://127.0.0.1:3000/wau-target-hit  # replay the WAU Target Hit
+curl -X POST http://127.0.0.1:3000/wau-target-hit  # replay the WUU Target Hit
 curl -X POST 'http://127.0.0.1:3000/theme?name=<name>'  # wear public/themes/<name>.js until midnight
 curl -X POST 'http://127.0.0.1:3000/theme?name=<name>&permanent'  # rewrite config.theme, survives restarts
 curl -X DELETE http://127.0.0.1:3000/theme         # back to config.theme

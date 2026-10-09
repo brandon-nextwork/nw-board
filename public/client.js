@@ -736,11 +736,11 @@ const feedRows = Array.from({ length: FEED_ROWS }, (_, i) => {
 });
 
 // --------------------------------------------------------------------------------
-// Weekly WAU: four dashboard KPIs and new WAU per day for this week vs last week.
+// Weekly Unique User Growth: four dashboard KPIs and new WUU per day for this week vs last week.
 // --------------------------------------------------------------------------------
 
 const wauHeader = T.decorations.headers?.wau;
-const wauPanel = panel(24, SHADOW ? 688 : 712, PANEL_W, 272, "WEEKLY WAU GROWTH", C.ink, wauHeader);
+const wauPanel = panel(24, SHADOW ? 688 : 712, PANEL_W, 272, "WEEKLY UNIQUE USER GROWTH", C.ink, wauHeader);
 const wauStatus = label("LOADING...", wauHeader ? 22 : 24, C.dim);
 wauStatus.anchor.set(1, 0);
 wauStatus.position.set(1852, 16);
@@ -783,7 +783,7 @@ function wauCard(x, y, title, hot) {
 // Neobrutal's boxes sit inside Paper's 16/22 body padding, a 14px gutter apart.
 const [cardX, cardY] = T.decorations.stats ? [[27, 471], [77, 153]] : [[20, 464], [68, 150]];
 const wauValues = {
-  currentWau: wauCard(cardX[0], cardY[0], "CURRENT WAU"),
+  currentWau: wauCard(cardX[0], cardY[0], "CURRENT WUU"),
   targetWau: wauCard(cardX[1], cardY[0], "WEEKLY TARGET"),
   targetPercent: wauCard(cardX[0], cardY[1], "TARGET REACHED", true),
   activationPercent: wauCard(cardX[1], cardY[1], "ACTIVATION RATE"),
@@ -821,7 +821,7 @@ wauChart.position.set(chart ? 1187 : 1158, chart ? 77 : 68);
 const plot = chart ? { x: 0, y: 30, width: 650, height: 82 } : { x: 8, y: 38, width: 672, height: 96 };
 wauPanel.addChild(wauChart);
 const chartType = face("ui", 18, 0.04, { lineHeight: 22 });
-const chartTitle = label("NEW WAU / DAY", chart ? 18 : 20, C.dim, chartType);
+const chartTitle = label("NEW WUU / DAY", chart ? 18 : 20, C.dim, chartType);
 wauChart.addChild(chartTitle);
 const currentLegend = label(chart ? "THIS WEEK" : "● THIS WEEK", 18, chart ? C.ink : C.amber, chartType && { lineHeight: 22 });
 currentLegend.position.set(500, 2);
@@ -870,7 +870,7 @@ const compact = (n) =>
   new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 })
     .format(n)
     .toLowerCase();
-const wauUnavailable = label("WAU DATA UNAVAILABLE — RETRYING", 24, C.dim);
+const wauUnavailable = label("WUU DATA UNAVAILABLE — RETRYING", 24, C.dim);
 wauUnavailable.anchor.set(0.5);
 wauUnavailable.position.set(wauChart.x + plot.x + plot.width / 2, 154);
 wauPanel.addChild(wauUnavailable);
@@ -969,7 +969,7 @@ const WAU_REFRESH_MS = 15 * 60 * 1000;
 async function loadWau() {
   try {
     const response = await fetch("/wau.json", { cache: "no-store" });
-    if (!response.ok) throw new Error(`WAU dashboard returned ${response.status}`);
+    if (!response.ok) throw new Error(`WUU dashboard returned ${response.status}`);
     const next = await response.json();
     if (
       ![next.currentWau, next.targetWau, next.targetPercent, next.activationPercent].every(
@@ -978,9 +978,9 @@ async function loadWau() {
       !Array.isArray(next.daily) ||
       next.daily.length !== 7
     )
-      throw new Error("invalid WAU dashboard data");
+      throw new Error("invalid WUU dashboard data");
     // The server answers 200 with its last good numbers when PostHog fails, so a Pi
-    // that lost its network overnight would otherwise show yesterday's WAU as UPDATED.
+    // that lost its network overnight would otherwise show yesterday's WUU as UPDATED.
     renderWau(next, Date.now() - Date.parse(next.fetchedAt) > 2 * WAU_REFRESH_MS);
   } catch (error) {
     console.warn(error);
@@ -1709,7 +1709,7 @@ function mergedTakeover(event, done) {
 }
 
 /**
- * wau-target-hit: today's new WAU beating the same weekday last week. Rarer than
+ * wau-target-hit: today's new WUU beating the same weekday last week. Rarer than
  * a merge and nobody's PR, so it holds the board longer: the confetti keeps
  * raining and the fireworks re-fire until the dim lifts.
  */
@@ -1723,10 +1723,10 @@ function wauTakeover(event, done) {
     "",
   );
   const day = typeof event.label === "string" && event.label ? event.label.toUpperCase() : "";
-  caption.text = `WE BEAT LAST ${day || "WEEK"}'S NEW WAU`;
+  caption.text = `WE BEAT LAST ${day || "WEEK"}'S NEW WUU`;
   const whole = new Intl.NumberFormat().format;
   if ([event.current, event.previous].every(Number.isFinite))
-    credit.text = `${whole(event.current)} NEW WAU TODAY  /  ${whole(event.previous)} LAST ${day.slice(0, 3) || "WEEK"}`;
+    credit.text = `${whole(event.current)} NEW WUU TODAY  /  ${whole(event.previous)} LAST ${day.slice(0, 3) || "WEEK"}`;
   fit();
   const bannerY = banner.y;
 
@@ -2219,7 +2219,7 @@ app.ticker.add((ticker) => {
 //   {type:"day-chime", at:"HH:MM", last} marks the start and end of the workday;
 //   last:true is the day's final chime (old servers send none: 17:00 is the end).
 //   {type:"wau-target-hit", audible, label, current, previous} is a Celebration
-//   with no PR (today's new WAU beating the same weekday last week; label is the
+//   with no PR (today's new WUU beating the same weekday last week; label is the
 //   weekday): it takes the board over but never joins the Feed.
 //   {type:"reminder", text, sound, audible} is a scheduled banner and
 //   {type:"scheduled-celebration", text, sound, audible} a scheduled takeover, both
@@ -2325,7 +2325,7 @@ playHeldCelebration();
 //   arcade.setMvp({names:["Maximus"],count:12}) / arcade.setMvp(null) — marquee MVP
 //   arcade.setDevDeploy({actor:"Maximus"}) / arcade.setDevDeploy(null) — feed header
 //   arcade.setWau() / arcade.setWau(undefined, true) / arcade.setWau(null, true)
-//     — sample success / stale / unavailable WAU states
+//     — sample success / stale / unavailable WUU states
 //   arcade.setHeadlines(["A very important AI headline"]) — bottom news ticker
 //   ?theme=arcade — load in a theme from public/themes (arcade is the pre-reskin
 //     look a Target Hit puts on until midnight); the server's snapshot `theme`

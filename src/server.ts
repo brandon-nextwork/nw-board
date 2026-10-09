@@ -184,7 +184,7 @@ type Options = {
   newsTimeoutMs?: number;
   /** Root of the PostHog API; tests point this at a stub. */
   posthogApiBase?: string;
-  /** How long the WAU dashboard proxy waits for PostHog's cached read. */
+  /** How long the WUU dashboard proxy waits for PostHog's cached read. */
   posthogTimeoutMs?: number;
   /** The Admin Console's loopback-only port; 0 picks a free one. */
   adminPort?: number;
@@ -254,14 +254,14 @@ function normalizeWauDashboard(payload: any) {
     return parsed;
   };
   const scalar = (id: number, name: string) => number(result(id)?.[0]?.[0], name);
-  const targetWau = scalar(WAU_TILES.targetWau, "target WAU");
+  const targetWau = scalar(WAU_TILES.targetWau, "target WUU");
   // Rows arrive ordered Day 1..7 of the Sat–Fri cycle; the first column is a free
   // label (the insight has carried "Day 1" and "Saturday" so far). Column 3 is
   // marketing's daily_target, falling back to targetWau ÷ 7 when missing or not
   // numeric, and extra columns are ignored, so an edit to the saved query cannot
   // 502 the board.
   const daily = result(WAU_TILES.daily).map((row: unknown, index: number) => {
-    if (!Array.isArray(row)) throw new Error("PostHog daily WAU row is malformed");
+    if (!Array.isArray(row)) throw new Error("PostHog daily WUU row is malformed");
     return {
       day: index + 1,
       label: String(row[0]),
@@ -270,10 +270,10 @@ function normalizeWauDashboard(payload: any) {
       target: typeof row[3] === "number" && Number.isFinite(row[3]) ? row[3] : targetWau / 7,
     };
   });
-  if (daily.length !== 7) throw new Error("PostHog daily WAU result must contain 7 days");
+  if (daily.length !== 7) throw new Error("PostHog daily WUU result must contain 7 days");
   return {
     fetchedAt: new Date().toISOString(),
-    currentWau: scalar(WAU_TILES.currentWau, "current WAU"),
+    currentWau: scalar(WAU_TILES.currentWau, "current WUU"),
     targetWau,
     targetPercent: scalar(WAU_TILES.targetPercent, "target percent"),
     activationPercent: scalar(WAU_TILES.activationPercent, "activation percent"),
@@ -282,7 +282,7 @@ function normalizeWauDashboard(payload: any) {
 }
 
 /**
- * On pace for today's target? Today's new WAU so far against its daily target
+ * On pace for today's target? Today's new WUU so far against its daily target
  * pro-rated by the `fraction` of today gone: at noon a 2000 target expects 1000.
  * ponytail: just after every local midnight `expected` is tiny, so the light swings on
  * a handful of users (or ingestion lag), and it judges PostHog's cached numbers
@@ -745,7 +745,7 @@ export async function startServer(port: number, options: Options = {}) {
       warm.searchParams.set("refresh", "blocking");
       fetch(warm, { headers, signal: AbortSignal.timeout(5 * 60_000) })
         .then((response) => response.body?.cancel())
-        .catch((error) => console.warn(`WAU dashboard refresh failed: ${error}`))
+        .catch((error) => console.warn(`WUU dashboard refresh failed: ${error}`))
         .finally(() => (warming = false));
     }
     url.searchParams.set("refresh", "force_cache");
@@ -755,7 +755,7 @@ export async function startServer(port: number, options: Options = {}) {
         signal: AbortSignal.timeout(options.posthogTimeoutMs ?? 15_000),
       });
       if (!response.ok) throw new Error(`PostHog returned ${response.status}`);
-      const payload = await limitedText(response, "WAU dashboard response exceeds 1 MiB");
+      const payload = await limitedText(response, "WUU dashboard response exceeds 1 MiB");
       const next = normalizeWauDashboard(JSON.parse(payload));
       const { today, dayKey, fraction } = clock();
       // A slow read asked before the one already applied holds older cache; letting it
@@ -779,7 +779,7 @@ export async function startServer(port: number, options: Options = {}) {
         const { label, current, previous } = next.daily[today];
         const audible = soundAllowed();
         console.log(
-          `WAU daily beat: ${label} ${current} > ${previous} sound=${audible ? "clip" : "silent (quiet hours)"}`,
+          `WUU daily beat: ${label} ${current} > ${previous} sound=${audible ? "clip" : "silent (quiet hours)"}`,
         );
         wearUntilMidnight("arcade");
         broadcast({ type: "wau-target-hit", audible, label, current, previous });
@@ -790,7 +790,7 @@ export async function startServer(port: number, options: Options = {}) {
         .set("Cache-Control", "no-store")
         .json({ ...lastWau, today, onTarget: onTarget(lastWau, today, fraction) });
     } catch (error) {
-      console.warn(`WAU dashboard unavailable: ${error}`);
+      console.warn(`WUU dashboard unavailable: ${error}`);
       // The cached read sometimes hangs or misses a tile; one bad read should not turn
       // the panel STALE, so serve the last good numbers under their own fetchedAt.
       if (lastWau) {
@@ -840,7 +840,7 @@ export async function startServer(port: number, options: Options = {}) {
     broadcast(snapshot());
   };
 
-  /** Replays the Target Hit on demand, with today's row from the last WAU read. */
+  /** Replays the Target Hit on demand, with today's row from the last WUU read. */
   const replayTargetHit = () => {
     wearUntilMidnight("arcade");
     const row = lastWau?.daily[(new Date(now()).getDay() + 1) % 7];
@@ -936,8 +936,8 @@ export async function startServer(port: number, options: Options = {}) {
   //               A Reminder is a banner; a Scheduled Celebration takes the board over.
   //               Neither joins the Feed. "sound" is the clip to play, if any, and
   //               "audible" is Quiet Hours at that minute, as for every other sound.
-  //   wau target: {"type":"wau-target-hit","audible":true|false, label, current, previous}
-  //               — today's new WAU (its daily row) beating the same weekday last week,
+  //   wuu target: {"type":"wau-target-hit","audible":true|false, label, current, previous}
+  //               — today's new WUU (its daily row) beating the same weekday last week,
   //               at most once a local day: a Celebration with no PR, "audible" gated by
   //               Quiet Hours. Also sent on demand by a loopback POST
   //               /wau-target-hit, with today's row from the last read.

@@ -20,8 +20,8 @@ GITHUB_WEBHOOK_SECRET=dev npm start   # http://localhost:3000
 - `GITHUB_WEBHOOK_SECRET` is required — the server refuses to start without it.
 - `GITHUB_TOKEN` is optional locally; without it Backfill is skipped and the
   board fills from live webhooks only.
-- `POSTHOG_PERSONAL_API_KEY` enables the Weekly WAU Growth Tracker. Without it,
-  the rest of the board runs and the WAU panel shows its retrying state.
+- `POSTHOG_PERSONAL_API_KEY` enables the Weekly Unique User Growth Tracker. Without it,
+  the rest of the board runs and the WUU panel shows its retrying state.
 - `PORT` defaults to 3000.
 - Real webhook deliveries need a public URL; production uses Tailscale Funnel.
   To fake an event locally, POST a signed payload to `/webhook` (see
@@ -100,7 +100,7 @@ curl -X DELETE http://127.0.0.1:3000/theme                           # back to t
 A live switch lasts until local midnight, `DELETE /theme`, or a server restart,
 then the default comes back. `&permanent` rewrites `"theme"` in `config.json`, so
 it survives restarts, and shows at once over any live switch. A Target Hit (today's
-new WAU beating the same weekday last week) puts on `arcade` until local midnight,
+new WUU beating the same weekday last week) puts on `arcade` until local midnight,
 the same way as a live switch. Whichever was set last wins.
 
 Every connected display reloads into the new Theme once no takeover or Day Chime
